@@ -54,6 +54,7 @@ class MetadataUploadResult:
     study_id: str
     uploaded_files: list[Path]
     responses: list[Any]
+    validation_result: ValidationResult | None = None
 
 
 class SubmissionClient:
@@ -353,7 +354,16 @@ class SubmissionClient:
         response.raise_for_status()
         return FtpUploadDetails.model_validate(response.json())
 
-    def upload_metadata(self, study_id, metadata_path=None, metadata_files=None):
+    def upload_metadata(
+        self,
+        study_id,
+        metadata_path=None,
+        metadata_files=None,
+        validate_after_upload=False,
+        validation_file_path=None,
+        validation_max_polls=VALIDATION_MAX_POLLS,
+        validation_poll_interval=VALIDATION_POLL_INTERVAL_SECONDS,
+    ):
         study_id = normalize_study_id(study_id)
         file_paths = resolve_metadata_file_paths(study_id, metadata_path=metadata_path, metadata_files=metadata_files)
         if not file_paths:
@@ -383,7 +393,21 @@ class SubmissionClient:
         if errors:
             raise SubmissionAPIError("Metadata upload failed:\n" + "\n".join(errors))
 
-        return MetadataUploadResult(study_id=study_id, uploaded_files=file_paths, responses=responses)
+        validation_result = None
+        if validate_after_upload:
+            validation_result = self.validate_study(
+                study_id,
+                validation_file_path=validation_file_path,
+                max_polls=validation_max_polls,
+                poll_interval=validation_poll_interval,
+            )
+
+        return MetadataUploadResult(
+            study_id=study_id,
+            uploaded_files=file_paths,
+            responses=responses,
+            validation_result=validation_result,
+        )
 
     def validate_study(
         self,
@@ -816,31 +840,76 @@ def ensure_validation_task_succeeded(study_id, validation_url, headers, max_poll
 
 
 def get_validation_errors(report):
-    if isinstance(report, list):
-        return [violation for violation in report if violation.get("type", "").upper() == "ERROR"]
+    return deduplicate_validation_errors(collect_validation_errors(report))
 
-    content = report.get("content", report)
-    task_result = content.get("taskResult", content) if isinstance(content, dict) else {}
-    if isinstance(task_result, dict):
-        messages = task_result.get("messages", {})
-        violations = messages.get("violations", task_result.get("violations", []))
-        return [violation for violation in violations if violation.get("type", "").upper() == "ERROR"]
 
-    messages = content.get("messages", {}) if isinstance(content, dict) else {}
-    violations = messages.get("violations", content.get("violations", [])) if isinstance(content, dict) else []
-    if violations:
-        return [violation for violation in violations if violation.get("type", "").upper() == "ERROR"]
-
-    validation = report.get("validation", report)
+def collect_validation_errors(value, section_name="", assume_error=False):
     errors = []
-    for section in validation.get("validations", []):
-        section_name = section.get("section", "")
-        for detail in section.get("details", []):
-            if detail.get("status", "").upper() == "ERROR":
-                error = dict(detail)
-                error.setdefault("section", section_name)
-                errors.append(error)
+    if isinstance(value, list):
+        for item in value:
+            errors.extend(collect_validation_errors(item, section_name=section_name, assume_error=assume_error))
+        return errors
+
+    if not isinstance(value, dict):
+        return errors
+
+    current_section = (
+        value.get("section")
+        or value.get("sectionName")
+        or value.get("context")
+        or section_name
+    )
+    if is_validation_error_item(value) or (assume_error and has_validation_message(value)):
+        error = dict(value)
+        if current_section:
+            error.setdefault("section", current_section)
+        errors.append(error)
+
+    for key in ("violations", "details", "errors", "rootCauses", "causes"):
+        if key in value:
+            errors.extend(
+                collect_validation_errors(
+                    value[key],
+                    section_name=current_section,
+                    assume_error=key in ("errors", "rootCauses", "causes"),
+                )
+            )
+
+    for key in ("content", "taskResult", "messages", "validation", "validations", "report", "reports", "children"):
+        if key in value:
+            errors.extend(collect_validation_errors(value[key], section_name=current_section))
+
     return errors
+
+
+def is_validation_error_item(value):
+    if not isinstance(value, dict):
+        return False
+
+    for key in ("type", "status", "severity", "level"):
+        indicator = value.get(key)
+        if isinstance(indicator, str) and indicator.upper() in ("ERROR", "FAIL", "FAILED", "FATAL"):
+            return True
+    return False
+
+
+def has_validation_message(value):
+    return any(
+        value.get(key)
+        for key in ("message", "title", "val_message", "description", "violation", "reason", "rootCause")
+    )
+
+
+def deduplicate_validation_errors(errors):
+    deduplicated = []
+    seen = set()
+    for error in errors:
+        key = json.dumps(error, sort_keys=True, default=str)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduplicated.append(error)
+    return deduplicated
 
 
 def format_validation_error(error):
@@ -851,26 +920,117 @@ def format_validation_error(error):
         or error.get("val_message")
         or error.get("description")
         or error.get("violation")
+        or error.get("reason")
+        or error.get("rootCause")
         or "Validation error"
     )
-    metadata_file = error.get("metadata_file") or error.get("source_file") or error.get("sourceFile")
-    if metadata_file:
-        return f"{section}: {message} ({metadata_file})"
+    details = []
+
+    location = format_validation_location(error)
+    if location:
+        details.append(f"location={location}")
+
+    field = get_first_validation_value(error, "field", "column", "property", "attribute", "path", "jsonPath")
+    if field:
+        details.append(f"field={field}")
+
+    rule = get_first_validation_value(error, "rule", "ruleId", "rule_id", "code", "validator")
+    if rule:
+        details.append(f"rule={rule}")
+
+    invalid_value = get_first_validation_value(error, "value", "invalidValue", "actualValue")
+    if invalid_value not in (None, ""):
+        details.append(f"value={invalid_value}")
+
+    if details:
+        return f"{section}: {message} | " + " | ".join(details)
     return f"{section}: {message}"
+
+
+def format_validation_location(error):
+    metadata_file = get_first_validation_value(
+        error,
+        "metadata_file",
+        "source_file",
+        "sourceFile",
+        "file",
+        "filename",
+        "fileName",
+    )
+    line = get_first_validation_value(error, "line", "lineNumber", "line_number", "row", "rowNumber", "row_number")
+    column = get_first_validation_value(error, "column", "columnNumber", "column_number", "col")
+
+    location = str(metadata_file) if metadata_file else ""
+    if line not in (None, ""):
+        location = f"{location}:{line}" if location else f"line {line}"
+    if column not in (None, ""):
+        location = f"{location}:{column}" if location else f"column {column}"
+    return location
+
+
+def get_first_validation_value(error, *keys):
+    for key in keys:
+        value = error.get(key)
+        if value not in (None, ""):
+            return value
+    return None
+
+
+def get_validation_root_causes(errors):
+    root_causes = []
+    for error in errors:
+        root_cause = {
+            "section": error.get("section") or "Unknown section",
+            "message": (
+                error.get("message")
+                or error.get("title")
+                or error.get("val_message")
+                or error.get("description")
+                or error.get("violation")
+                or error.get("reason")
+                or error.get("rootCause")
+                or "Validation error"
+            ),
+        }
+        location = format_validation_location(error)
+        if location:
+            root_cause["location"] = location
+        field = get_first_validation_value(error, "field", "column", "property", "attribute", "path", "jsonPath")
+        if field:
+            root_cause["field"] = field
+        rule = get_first_validation_value(error, "rule", "ruleId", "rule_id", "code", "validator")
+        if rule:
+            root_cause["rule"] = rule
+        invalid_value = get_first_validation_value(error, "value", "invalidValue", "actualValue")
+        if invalid_value not in (None, ""):
+            root_cause["value"] = invalid_value
+        root_causes.append(root_cause)
+    return root_causes
 
 
 def get_default_validation_report_path(study_id):
     return DEFAULT_LOCAL_SUBMISSION_CACHE_PATH / study_id / f"{study_id}_validation_report.json"
 
 
-def get_validation_result(report):
+def get_validation_result(study_id, report):
     if not isinstance(report, dict):
         return report
 
     content = report.get("content")
     if isinstance(content, dict) and "taskResult" in content:
-        return content["taskResult"]
-    return report
+        validation_result = content["taskResult"]
+    else:
+        validation_result = report
+
+    if not isinstance(validation_result, dict):
+        return validation_result
+
+    output = dict(validation_result)
+    output.setdefault("accession", normalize_study_id(study_id))
+    errors = get_validation_errors(validation_result)
+    if errors:
+        output["rootCauses"] = get_validation_root_causes(errors)
+    return output
 
 
 def save_validation_report(study_id, report, validation_file_path=None):
@@ -881,6 +1041,6 @@ def save_validation_report(study_id, report, validation_file_path=None):
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with output_path.open("w", encoding="utf-8") as validation_file:
-        json.dump(get_validation_result(report), validation_file, indent=2)
+        json.dump(get_validation_result(study_id, report), validation_file, indent=2)
         validation_file.write("\n")
     return output_path

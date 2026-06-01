@@ -202,7 +202,51 @@ def test_submission_upload_metadata_success(mock_client_cls, runner, tmp_path):
         "MTBLS123",
         metadata_path=str(tmp_path),
         metadata_files=(),
+        validate_after_upload=True,
+        validation_file_path=None,
+        validation_max_polls=120,
+        validation_poll_interval=5,
     )
+
+
+@patch("mtblspy.commands.submissions.submission_upload_metadata.SubmissionClient")
+def test_submission_upload_metadata_prints_validation_errors(mock_client_cls, runner, tmp_path):
+    metadata_file = tmp_path / "i_Investigation.txt"
+    metadata_file.write_text("metadata", encoding="utf-8")
+    report_path = tmp_path / "validation-report.json"
+
+    validation_result = MagicMock()
+    validation_result.errors = [
+        {
+            "type": "ERROR",
+            "section": "Study",
+            "title": "Missing required metadata",
+            "sourceFile": "i_Investigation.txt",
+            "line": 4,
+            "rule": "INVESTIGATION_TITLE_REQUIRED",
+        }
+    ]
+    validation_result.report_path = report_path
+
+    client = MagicMock()
+    client.upload_metadata.return_value = MetadataUploadResult(
+        study_id="MTBLS123",
+        uploaded_files=[metadata_file],
+        responses=[{"success": True}],
+        validation_result=validation_result,
+    )
+    mock_client_cls.return_value = client
+
+    result = runner.invoke(
+        cli,
+        ["submission", "upload-metadata", "MTBLS123", "--metadata-path", str(tmp_path)],
+    )
+
+    assert result.exit_code == 0
+    assert "Validation completed with 1 error(s)." in result.output
+    assert "Missing required metadata" in result.output
+    assert "location=i_Investigation.txt:4" in result.output
+    assert f"Validation report is saved as {report_path}" in result.output
 
 
 @patch("mtblspy.commands.submissions.submission_validate.SubmissionClient")

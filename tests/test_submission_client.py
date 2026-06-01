@@ -5,6 +5,8 @@ import pytest
 
 from mtblspy.commands.submissions.client import (
     SubmissionClient,
+    format_validation_error,
+    get_validation_errors,
     get_keycloak_token_url,
     get_studies_from_user_response,
     save_sample_study_input,
@@ -558,7 +560,8 @@ def test_validate_study_retries_transient_task_not_found_and_saves_report(
 
     assert result.errors == []
     assert json.loads(report_path.read_text(encoding="utf-8")) == {
-        "messages": {"summary": [], "violations": []}
+        "messages": {"summary": [], "violations": []},
+        "accession": "MTBLS123",
     }
     mock_sleep.assert_called_once_with(5)
     validation_headers = {"accept": "application/json", "Authorization": "Bearer jwt-token"}
@@ -707,6 +710,97 @@ def test_submit_study_blocks_status_update_when_validation_errors(
         )
 
     mock_put.assert_not_called()
+
+
+def test_validation_errors_include_nested_root_cause_details():
+    report = {
+        "content": {
+            "taskResult": {
+                "messages": {
+                    "violations": [
+                        {
+                            "type": "ERROR",
+                            "section": "Assay",
+                            "title": "Referenced data file is missing",
+                            "sourceFile": "a_MTBLS123_lc-ms.txt",
+                            "lineNumber": 12,
+                            "column": "Raw Spectral Data File",
+                            "ruleId": "ASSAY_FILE_EXISTS",
+                            "value": "FILES/missing.raw",
+                        }
+                    ]
+                }
+            }
+        }
+    }
+
+    errors = get_validation_errors(report)
+
+    assert len(errors) == 1
+    assert format_validation_error(errors[0]) == (
+        "Assay: Referenced data file is missing | "
+        "location=a_MTBLS123_lc-ms.txt:12:Raw Spectral Data File | "
+        "field=Raw Spectral Data File | rule=ASSAY_FILE_EXISTS | value=FILES/missing.raw"
+    )
+
+
+@patch("mtblspy.commands.submissions.client.requests.post")
+@patch("mtblspy.commands.submissions.client.get_jwt_token")
+@patch("mtblspy.commands.submissions.client.get_base_url")
+def test_validate_study_saves_accession_and_root_causes(
+    mock_get_base_url,
+    mock_get_jwt_token,
+    mock_post,
+    tmp_path,
+):
+    mock_get_base_url.return_value = "https://wwwdev.ebi.ac.uk/metabolights/ws"
+    mock_get_jwt_token.return_value = "jwt-token"
+    validation_start_response = MagicMock()
+    validation_start_response.json.return_value = {
+        "status": "success",
+        "content": {
+            "task": {
+                "taskId": "validation-task-1",
+                "taskStatus": "SUCCESS",
+                "ready": True,
+                "isSuccessful": True,
+            },
+            "taskResult": {
+                "messages": {
+                    "summary": [],
+                    "violations": [
+                        {
+                            "type": "ERROR",
+                            "section": "Study",
+                            "title": "Missing required metadata",
+                            "sourceFile": "i_Investigation.txt",
+                            "line": 4,
+                            "rule": "INVESTIGATION_TITLE_REQUIRED",
+                        }
+                    ],
+                }
+            },
+        },
+    }
+    mock_post.return_value = validation_start_response
+    report_path = tmp_path / "validation-report.json"
+
+    result = SubmissionClient(api_token="valid-key").validate_study(
+        "mtbls123",
+        validation_file_path=report_path,
+    )
+
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    assert result.errors[0]["title"] == "Missing required metadata"
+    assert report["accession"] == "MTBLS123"
+    assert report["rootCauses"] == [
+        {
+            "section": "Study",
+            "message": "Missing required metadata",
+            "location": "i_Investigation.txt:4",
+            "rule": "INVESTIGATION_TITLE_REQUIRED",
+        }
+    ]
 
 
 @patch("mtblspy.commands.submissions.client.time.sleep")
