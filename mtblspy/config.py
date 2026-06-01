@@ -2,7 +2,7 @@ import os
 
 from mtblspy.credentials import CredentialStore
 
-DEFAULT_BASE_URL = "https://wwwdev.ebi.ac.uk/metabolights/ws"
+DEFAULT_BASE_URL = "https://www.ebi.ac.uk/metabolights/ws"
 _CREDENTIAL_STORE = CredentialStore()
 
 

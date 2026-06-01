@@ -211,11 +211,6 @@ class SubmissionClient:
             )
             response.raise_for_status()
             api_token = get_api_token_from_login_response(response)
-            if not api_token:
-                raise AuthenticationError(
-                    f"Login succeeded but no API token found in response from {login_url}. "
-                    f"Response: {get_response_payload(response)}"
-                )
         except requests.RequestException as exc:
             message = f"Login failed at {login_url}: {exc}"
             if exc.response is not None:
@@ -275,6 +270,14 @@ class SubmissionClient:
         if not jwt_token:
             raise AuthenticationError("Unable to fetch JWT token. Attempts failed: " + "; ".join(errors))
 
+        if not api_token:
+            api_token = self.fetch_api_token_from_accounts(jwt_token)
+            if not api_token:
+                raise AuthenticationError(
+                    f"Login succeeded but no API token found in response from {login_url} "
+                    f"or {self.rest_api_base_url.rstrip('/')}/auth/accounts."
+                )
+
         # 3. Save everything
         save_config(api_key=api_token, base_url=self.rest_api_base_url, user_name=user_name)
         save_jwt_token(self.submission_api_base_url, jwt_token)
@@ -284,6 +287,23 @@ class SubmissionClient:
     def password_login(self, user_name, password):
         """Backward-compatible alias for username/password login."""
         self.login(user_name, password)
+
+    def fetch_api_token_from_accounts(self, jwt_token):
+        accounts_url = f"{self.rest_api_base_url.rstrip('/')}/auth/accounts"
+        try:
+            response = requests.get(
+                accounts_url,
+                headers={"accept": "application/json", "Authorization": f"Bearer {jwt_token}"},
+                timeout=30,
+            )
+            response.raise_for_status()
+        except requests.RequestException as exc:
+            message = f"Unable to fetch API token from {accounts_url}: {exc}"
+            if exc.response is not None:
+                message = f"{message}. Response: {get_response_payload(exc.response)}"
+            raise AuthenticationError(message) from exc
+
+        return get_api_token_from_login_response(response)
 
     def verify_api_token(self, api_token):
         response = requests.get(
@@ -598,10 +618,18 @@ def get_api_token_from_login_response(response):
 
 def find_api_token(value):
     if isinstance(value, dict):
-        content = value.get("content")
-        if isinstance(content, dict):
-            api_token = content.get("apitoken")
+        for key in ("apitoken", "apiToken", "api_token"):
+            api_token = value.get(key)
             if isinstance(api_token, str) and api_token:
+                return api_token
+        for nested_value in value.values():
+            api_token = find_api_token(nested_value)
+            if api_token:
+                return api_token
+    if isinstance(value, list):
+        for item in value:
+            api_token = find_api_token(item)
+            if api_token:
                 return api_token
     return None
 

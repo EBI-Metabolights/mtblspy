@@ -72,6 +72,68 @@ def test_login_fetches_api_token_jwt_and_refresh_token(
     )
 
 
+@patch("mtblspy.commands.submissions.client.save_refresh_token")
+@patch("mtblspy.commands.submissions.client.save_jwt_token")
+@patch("mtblspy.commands.submissions.client.save_config")
+@patch("mtblspy.commands.submissions.client.requests.get")
+@patch("mtblspy.commands.submissions.client.requests.post")
+@patch("mtblspy.commands.submissions.client.get_base_url")
+def test_login_fetches_api_token_from_accounts_when_login_token_empty(
+    mock_get_base_url,
+    mock_post,
+    mock_get,
+    mock_save_config,
+    mock_save_jwt_token,
+    mock_save_refresh_token,
+):
+    mock_get_base_url.return_value = "https://www.ebi.ac.uk/metabolights/ws"
+    login_response = MagicMock()
+    login_response.headers = {}
+    login_response.json.return_value = {"content": {"apitoken": ""}}
+
+    token_response = MagicMock()
+    token_response.headers = {}
+    token_response.json.return_value = {
+        "access_token": "jwt-token",
+        "refresh_token": "refresh-token",
+        "token_type": "bearer",
+    }
+
+    accounts_response = MagicMock()
+    accounts_response.headers = {}
+    accounts_response.json.return_value = {
+        "content": [
+            {
+                "email": "user@example.org",
+                "apitoken": "valid-key",
+            }
+        ]
+    }
+    mock_post.side_effect = [login_response, token_response]
+    mock_get.return_value = accounts_response
+
+    SubmissionClient().login("user@example.org", "password")
+
+    assert mock_get.call_args.args[0] == "https://www.ebi.ac.uk/metabolights/ws/auth/accounts"
+    assert mock_get.call_args.kwargs["headers"] == {
+        "accept": "application/json",
+        "Authorization": "Bearer jwt-token",
+    }
+    mock_save_config.assert_called_once_with(
+        api_key="valid-key",
+        base_url="https://www.ebi.ac.uk/metabolights/ws",
+        user_name="user@example.org",
+    )
+    mock_save_jwt_token.assert_called_once_with(
+        "https://www.ebi.ac.uk/metabolights/ws3",
+        "jwt-token",
+    )
+    mock_save_refresh_token.assert_called_once_with(
+        "https://www.ebi.ac.uk/metabolights/ws3",
+        "refresh-token",
+    )
+
+
 @patch("mtblspy.commands.submissions.client.requests.post")
 @patch("mtblspy.commands.submissions.client.get_api_key")
 @patch("mtblspy.commands.submissions.client.get_base_url")

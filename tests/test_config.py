@@ -55,8 +55,8 @@ def test_get_config_uses_default_base_url(monkeypatch):
 
     config = get_config()
 
-    assert config == {"base_url": "https://wwwdev.ebi.ac.uk/metabolights/ws"}
-    assert DEFAULT_BASE_URL == "https://wwwdev.ebi.ac.uk/metabolights/ws"
+    assert config == {"base_url": "https://www.ebi.ac.uk/metabolights/ws"}
+    assert DEFAULT_BASE_URL == "https://www.ebi.ac.uk/metabolights/ws"
 
 
 def test_save_config_stores_auth_values_in_keyring_only(monkeypatch):
