@@ -56,6 +56,45 @@ def test_auth_login_prompts_for_missing_values(mock_client_cls, runner):
     client.login.assert_called_once_with("user@example.org", "password")
 
 
+@patch("mtblspy.commands.auth.logout.clear_session")
+@patch("mtblspy.commands.auth.logout.SubmissionClient")
+def test_auth_logout_clears_current_session(mock_client_cls, mock_clear_session, runner):
+    client = MagicMock()
+    client.rest_api_base_url = "https://www.ebi.ac.uk/metabolights/ws"
+    client.submission_api_base_url = "https://www.ebi.ac.uk/metabolights/ws3"
+    mock_client_cls.return_value = client
+
+    result = runner.invoke(cli, ["auth", "logout"])
+
+    assert result.exit_code == 0
+    assert "Logged out" in result.output
+    mock_clear_session.assert_called_once_with(
+        "https://www.ebi.ac.uk/metabolights/ws",
+        "https://www.ebi.ac.uk/metabolights/ws3",
+    )
+
+
+@patch("mtblspy.commands.auth.logout.clear_session")
+@patch("mtblspy.commands.auth.logout.SubmissionClient")
+def test_auth_logout_warns_when_env_credentials_remain(
+    mock_client_cls,
+    mock_clear_session,
+    runner,
+    monkeypatch,
+):
+    monkeypatch.setenv("MTBLS_API_KEY", "env-key")
+    client = MagicMock()
+    client.rest_api_base_url = "https://www.ebi.ac.uk/metabolights/ws"
+    client.submission_api_base_url = "https://www.ebi.ac.uk/metabolights/ws3"
+    mock_client_cls.return_value = client
+
+    result = runner.invoke(cli, ["auth", "logout"])
+
+    assert result.exit_code == 0
+    assert "MTBLS_API_KEY" in result.output
+    mock_clear_session.assert_called_once()
+
+
 def test_config_show_prints_effective_config(runner, monkeypatch):
     monkeypatch.setenv("MTBLS_BASE_URL", "https://example.org/metabolights/ws")
 

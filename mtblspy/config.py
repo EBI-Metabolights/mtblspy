@@ -49,5 +49,9 @@ def get_refresh_token(rest_api_base_url):
     return _CREDENTIAL_STORE.get_refresh_token(rest_api_base_url)
 
 
+def clear_session(rest_api_base_url=None, submission_api_base_url=None):
+    _CREDENTIAL_STORE.clear_session(rest_api_base_url, submission_api_base_url)
+
+
 def get_base_url():
     return os.getenv("MTBLS_BASE_URL") or DEFAULT_BASE_URL
