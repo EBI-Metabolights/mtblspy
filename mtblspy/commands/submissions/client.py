@@ -43,6 +43,12 @@ class ValidationResult:
 
 
 @dataclass
+class ValidationRootCauseResult:
+    validation_result: ValidationResult
+    isa_json_path: Path
+
+
+@dataclass
 class StatusUpdateResult:
     study_id: str
     status: str
@@ -54,6 +60,7 @@ class MetadataUploadResult:
     study_id: str
     uploaded_files: list[Path]
     responses: list[Any]
+    validation_result: ValidationResult | None = None
 
 
 class SubmissionClient:
@@ -353,7 +360,16 @@ class SubmissionClient:
         response.raise_for_status()
         return FtpUploadDetails.model_validate(response.json())
 
-    def upload_metadata(self, study_id, metadata_path=None, metadata_files=None):
+    def upload_metadata(
+        self,
+        study_id,
+        metadata_path=None,
+        metadata_files=None,
+        validate_after_upload=False,
+        validation_file_path=None,
+        validation_max_polls=VALIDATION_MAX_POLLS,
+        validation_poll_interval=VALIDATION_POLL_INTERVAL_SECONDS,
+    ):
         study_id = normalize_study_id(study_id)
         file_paths = resolve_metadata_file_paths(study_id, metadata_path=metadata_path, metadata_files=metadata_files)
         if not file_paths:
@@ -383,7 +399,21 @@ class SubmissionClient:
         if errors:
             raise SubmissionAPIError("Metadata upload failed:\n" + "\n".join(errors))
 
-        return MetadataUploadResult(study_id=study_id, uploaded_files=file_paths, responses=responses)
+        validation_result = None
+        if validate_after_upload:
+            validation_result = self.validate_study(
+                study_id,
+                validation_file_path=validation_file_path,
+                max_polls=validation_max_polls,
+                poll_interval=validation_poll_interval,
+            )
+
+        return MetadataUploadResult(
+            study_id=study_id,
+            uploaded_files=file_paths,
+            responses=responses,
+            validation_result=validation_result,
+        )
 
     def validate_study(
         self,
@@ -391,11 +421,46 @@ class SubmissionClient:
         validation_file_path=None,
         max_polls=VALIDATION_MAX_POLLS,
         poll_interval=VALIDATION_POLL_INTERVAL_SECONDS,
+        use_isa_json=False,
+        include_root_causes=False,
     ):
         study_id = normalize_study_id(study_id)
-        report = self.run_study_validation(study_id, max_polls=max_polls, poll_interval=poll_interval)
-        report_path = save_validation_report(study_id, report, validation_file_path)
-        return ValidationResult(report=report, errors=get_validation_errors(report), report_path=report_path)
+        isa_json = self.get_study_isa_json(study_id) if use_isa_json else None
+        report = self.run_study_validation(study_id, isa_json=isa_json, max_polls=max_polls, poll_interval=poll_interval)
+        report_path = save_validation_report(
+            study_id,
+            report,
+            validation_file_path,
+            isa_json=isa_json,
+            include_root_causes=include_root_causes,
+        )
+        errors = get_validation_errors(report)
+        if isa_json:
+            errors = enrich_validation_errors_with_isa_json(errors, isa_json)
+        return ValidationResult(report=report, errors=errors, report_path=report_path)
+
+    def find_validation_root_causes(
+        self,
+        study_id,
+        isa_json_file_path=None,
+        validation_file_path=None,
+        max_polls=VALIDATION_MAX_POLLS,
+        poll_interval=VALIDATION_POLL_INTERVAL_SECONDS,
+    ):
+        study_id = normalize_study_id(study_id)
+        isa_json = self.get_study_isa_json(study_id)
+        isa_json_path = save_isa_json(study_id, isa_json, isa_json_file_path)
+        report = self.run_study_validation(study_id, isa_json=isa_json, max_polls=max_polls, poll_interval=poll_interval)
+        report_path = save_validation_report(
+            study_id,
+            report,
+            validation_file_path,
+            isa_json=isa_json,
+            include_root_causes=True,
+        )
+        errors = enrich_validation_errors_with_isa_json(get_validation_errors(report), isa_json)
+        validation_result = ValidationResult(report=report, errors=errors, report_path=report_path)
+        return ValidationRootCauseResult(validation_result=validation_result, isa_json_path=isa_json_path)
 
     def submit_study(
         self,
@@ -428,6 +493,7 @@ class SubmissionClient:
     def run_study_validation(
         self,
         study_id,
+        isa_json=None,
         max_polls=VALIDATION_MAX_POLLS,
         poll_interval=VALIDATION_POLL_INTERVAL_SECONDS,
     ):
@@ -435,20 +501,10 @@ class SubmissionClient:
         validation_url = f"{self.submission_api_base_url.rstrip('/')}/submissions/v2/validations/{study_id}"
         headers = self.get_submission_headers()
 
-        response = requests.post(
-            validation_url,
-            headers=headers,
-            params={"run_metadata_modifiers": "false", "override_previous_task_results": "true"},
-            timeout=30,
-        )
+        response = post_validation_request(validation_url, headers, isa_json=isa_json)
         if response.status_code == 401:
             headers = self.get_submission_headers(force_refresh=True)
-            response = requests.post(
-                validation_url,
-                headers=headers,
-                params={"run_metadata_modifiers": "false", "override_previous_task_results": "true"},
-                timeout=30,
-            )
+            response = post_validation_request(validation_url, headers, isa_json=isa_json)
         if response.status_code == 401:
             raise AuthenticationError(
                 f"Submission validation API rejected the JWT token for {study_id}. "
@@ -477,9 +533,46 @@ class SubmissionClient:
 
         return response_data
 
+    def get_study_isa_json(self, study_id):
+        study_id = normalize_study_id(study_id)
+        response = requests.get(
+            f"{self.rest_api_base_url.rstrip('/')}/studies/{study_id}",
+            headers=self.get_auth_headers(),
+            timeout=30,
+        )
+        response.raise_for_status()
+        return extract_isa_json(response.json())
+
 
 def normalize_study_id(study_id):
     return study_id.upper().strip()
+
+
+def post_validation_request(validation_url, headers, isa_json=None):
+    kwargs = {
+        "headers": headers,
+        "params": {"run_metadata_modifiers": "false", "override_previous_task_results": "true"},
+        "timeout": 30,
+    }
+    if isa_json is not None:
+        kwargs["json"] = isa_json
+    return requests.post(validation_url, **kwargs)
+
+
+def extract_isa_json(response_data):
+    if not isinstance(response_data, dict):
+        return response_data
+
+    content = response_data.get("content")
+    if isinstance(content, dict):
+        return extract_isa_json(content)
+
+    for key in ("isaInvestigation", "isaJson", "isa_json", "study"):
+        value = response_data.get(key)
+        if isinstance(value, dict):
+            return value
+
+    return response_data
 
 
 def get_project_root():
@@ -816,64 +909,332 @@ def ensure_validation_task_succeeded(study_id, validation_url, headers, max_poll
 
 
 def get_validation_errors(report):
-    if isinstance(report, list):
-        return [violation for violation in report if violation.get("type", "").upper() == "ERROR"]
+    return deduplicate_validation_errors(collect_validation_errors(report))
 
-    content = report.get("content", report)
-    task_result = content.get("taskResult", content) if isinstance(content, dict) else {}
-    if isinstance(task_result, dict):
-        messages = task_result.get("messages", {})
-        violations = messages.get("violations", task_result.get("violations", []))
-        return [violation for violation in violations if violation.get("type", "").upper() == "ERROR"]
 
-    messages = content.get("messages", {}) if isinstance(content, dict) else {}
-    violations = messages.get("violations", content.get("violations", [])) if isinstance(content, dict) else []
-    if violations:
-        return [violation for violation in violations if violation.get("type", "").upper() == "ERROR"]
+def enrich_validation_errors_with_isa_json(errors, isa_json):
+    enriched_errors = []
+    for error in errors:
+        enriched_error = dict(error)
+        if get_first_present_validation_value(enriched_error, "value", "invalidValue", "actualValue") is None:
+            metadata_path = get_first_validation_value(enriched_error, "jsonPath", "path")
+            metadata_value = get_isa_json_value(isa_json, metadata_path)
+            if metadata_value is not None:
+                enriched_error["value"] = metadata_value
+        enriched_errors.append(enriched_error)
+    return enriched_errors
 
-    validation = report.get("validation", report)
+
+def collect_validation_errors(value, section_name="", assume_error=False):
     errors = []
-    for section in validation.get("validations", []):
-        section_name = section.get("section", "")
-        for detail in section.get("details", []):
-            if detail.get("status", "").upper() == "ERROR":
-                error = dict(detail)
-                error.setdefault("section", section_name)
-                errors.append(error)
+    if isinstance(value, list):
+        for item in value:
+            errors.extend(collect_validation_errors(item, section_name=section_name, assume_error=assume_error))
+        return errors
+
+    if not isinstance(value, dict):
+        return errors
+
+    current_section = (
+        value.get("section")
+        or value.get("sectionName")
+        or value.get("context")
+        or section_name
+    )
+    if is_validation_error_item(value) or (assume_error and has_validation_message(value)):
+        error = dict(value)
+        if current_section:
+            error.setdefault("section", current_section)
+        errors.append(error)
+
+    for key in ("violations", "details", "errors", "rootCauses", "causes"):
+        if key in value:
+            errors.extend(
+                collect_validation_errors(
+                    value[key],
+                    section_name=current_section,
+                    assume_error=key in ("errors", "rootCauses", "causes"),
+                )
+            )
+
+    for key in ("content", "taskResult", "task_result", "messages", "validation", "validations", "report", "reports", "children"):
+        if key in value:
+            errors.extend(collect_validation_errors(value[key], section_name=current_section))
+
     return errors
+
+
+def is_validation_error_item(value):
+    if not isinstance(value, dict):
+        return False
+
+    for key in ("type", "status", "severity", "level"):
+        indicator = value.get(key)
+        if isinstance(indicator, str) and indicator.upper() in ("ERROR", "FAIL", "FAILED", "FATAL"):
+            return True
+    return False
+
+
+def has_validation_message(value):
+    return any(
+        value.get(key)
+        for key in (
+            "message",
+            "violation",
+            "title",
+            "val_message",
+            "description",
+            "reason",
+            "rootCause",
+            "root_cause",
+        )
+    )
+
+
+def deduplicate_validation_errors(errors):
+    deduplicated = []
+    seen = set()
+    for error in errors:
+        key = json.dumps(error, sort_keys=True, default=str)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduplicated.append(error)
+    return deduplicated
 
 
 def format_validation_error(error):
     section = error.get("section") or "Unknown section"
-    message = (
+    message = get_validation_error_message(error)
+    details = []
+
+    location = format_validation_location(error)
+    if location:
+        details.append(f"location={location}")
+
+    field = get_validation_error_field(error)
+    if field:
+        details.append(f"field={field}")
+
+    rule = get_validation_error_rule(error)
+    if rule:
+        details.append(f"rule={rule}")
+
+    invalid_value = get_validation_error_value(error)
+    if invalid_value is not None:
+        details.append(f"value={format_validation_detail_value(invalid_value)}")
+
+    if details:
+        return f"{section}: {message} | " + " | ".join(details)
+    return f"{section}: {message}"
+
+
+def format_validation_location(error):
+    metadata_file = get_first_validation_value(
+        error,
+        "metadata_file",
+        "source_file",
+        "sourceFile",
+        "file",
+        "filename",
+        "fileName",
+    )
+    line = get_first_validation_value(error, "line", "lineNumber", "line_number", "row", "rowNumber", "row_number")
+    column = get_first_validation_value(error, "column", "columnNumber", "column_number", "col")
+
+    location = str(metadata_file) if metadata_file else ""
+    if line not in (None, ""):
+        location = f"{location}:{line}" if location else f"line {line}"
+    if column not in (None, ""):
+        location = f"{location}:{column}" if location else f"column {column}"
+    return location
+
+
+def get_first_validation_value(error, *keys):
+    for key in keys:
+        value = error.get(key)
+        if value not in (None, ""):
+            return value
+    return None
+
+
+def get_first_present_validation_value(error, *keys):
+    for key in keys:
+        if key in error and error[key] is not None:
+            return error[key]
+    return None
+
+
+def get_validation_error_message(error):
+    return (
         error.get("message")
+        or error.get("violation")
         or error.get("title")
         or error.get("val_message")
         or error.get("description")
-        or error.get("violation")
+        or error.get("reason")
+        or error.get("rootCause")
+        or error.get("root_cause")
         or "Validation error"
     )
-    metadata_file = error.get("metadata_file") or error.get("source_file") or error.get("sourceFile")
-    if metadata_file:
-        return f"{section}: {message} ({metadata_file})"
-    return f"{section}: {message}"
+
+
+def get_validation_error_field(error):
+    return get_first_validation_value(
+        error,
+        "field",
+        "sourceColumnHeader",
+        "source_column_header",
+        "column",
+        "property",
+        "attribute",
+        "path",
+        "jsonPath",
+    )
+
+
+def get_validation_error_rule(error):
+    return get_first_validation_value(
+        error,
+        "rule",
+        "identifier",
+        "ruleId",
+        "rule_id",
+        "val_sequence",
+        "code",
+        "validator",
+    )
+
+
+def get_validation_error_value(error):
+    return get_first_present_validation_value(error, "value", "values", "invalidValue", "actualValue")
+
+
+def format_validation_detail_value(value):
+    if isinstance(value, list):
+        return ", ".join(str(item) for item in value)
+    return str(value)
+
+
+def get_isa_json_value(isa_json, metadata_path):
+    if not metadata_path:
+        return None
+
+    tokens = parse_metadata_path(str(metadata_path))
+    current_value = isa_json
+    for token in tokens:
+        if isinstance(current_value, dict):
+            current_value = current_value.get(token)
+            continue
+        if isinstance(current_value, list):
+            try:
+                current_value = current_value[int(token)]
+                continue
+            except (ValueError, IndexError):
+                return None
+        return None
+    return current_value
+
+
+def parse_metadata_path(metadata_path):
+    if metadata_path.startswith("/"):
+        return [token for token in metadata_path.strip("/").split("/") if token]
+
+    path = metadata_path[2:] if metadata_path.startswith("$.") else metadata_path
+    tokens = []
+    current_token = []
+    index_token = []
+    in_index = False
+
+    for character in path:
+        if character == "." and not in_index:
+            if current_token:
+                tokens.append("".join(current_token))
+                current_token = []
+            continue
+        if character == "[":
+            if current_token:
+                tokens.append("".join(current_token))
+                current_token = []
+            in_index = True
+            index_token = []
+            continue
+        if character == "]" and in_index:
+            tokens.append("".join(index_token).strip("'\""))
+            in_index = False
+            continue
+        if in_index:
+            index_token.append(character)
+        else:
+            current_token.append(character)
+
+    if current_token:
+        tokens.append("".join(current_token))
+    return [token for token in tokens if token]
+
+
+def get_validation_root_causes(errors):
+    root_causes = []
+    for error in errors:
+        root_cause = {
+            "section": error.get("section") or "Unknown section",
+            "message": get_validation_error_message(error),
+        }
+        title = get_first_validation_value(error, "title")
+        if title and title != root_cause["message"]:
+            root_cause["title"] = title
+        location = format_validation_location(error)
+        if location:
+            root_cause["location"] = location
+        field = get_validation_error_field(error)
+        if field:
+            root_cause["field"] = field
+        rule = get_validation_error_rule(error)
+        if rule:
+            root_cause["rule"] = rule
+        column_index = get_first_validation_value(error, "sourceColumnIndex", "source_column_index")
+        if column_index not in (None, ""):
+            root_cause["columnIndex"] = column_index
+        invalid_value = get_validation_error_value(error)
+        if invalid_value is not None:
+            root_cause["value"] = invalid_value
+        root_causes.append(root_cause)
+    return root_causes
 
 
 def get_default_validation_report_path(study_id):
     return DEFAULT_LOCAL_SUBMISSION_CACHE_PATH / study_id / f"{study_id}_validation_report.json"
 
 
-def get_validation_result(report):
+def get_default_isa_json_path(study_id):
+    return DEFAULT_LOCAL_SUBMISSION_CACHE_PATH / study_id / f"{study_id}.json"
+
+
+def get_validation_result(study_id, report, isa_json=None, include_root_causes=False):
     if not isinstance(report, dict):
         return report
 
     content = report.get("content")
-    if isinstance(content, dict) and "taskResult" in content:
-        return content["taskResult"]
-    return report
+    if isinstance(content, dict) and ("taskResult" in content or "task_result" in content):
+        validation_result = content.get("taskResult") or content.get("task_result")
+    else:
+        validation_result = report
+
+    if not isinstance(validation_result, dict):
+        return validation_result
+
+    output = dict(validation_result)
+    output.setdefault("accession", normalize_study_id(study_id))
+    if include_root_causes:
+        errors = get_validation_errors(validation_result)
+        if isa_json:
+            errors = enrich_validation_errors_with_isa_json(errors, isa_json)
+        if errors:
+            output["rootCauses"] = get_validation_root_causes(errors)
+    return output
 
 
-def save_validation_report(study_id, report, validation_file_path=None):
+def save_validation_report(study_id, report, validation_file_path=None, isa_json=None, include_root_causes=False):
     output_path = Path(validation_file_path).expanduser() if validation_file_path else get_default_validation_report_path(study_id)
     output_path = output_path.resolve()
     if output_path.exists() and output_path.is_dir():
@@ -881,6 +1242,23 @@ def save_validation_report(study_id, report, validation_file_path=None):
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with output_path.open("w", encoding="utf-8") as validation_file:
-        json.dump(get_validation_result(report), validation_file, indent=2)
+        json.dump(
+            get_validation_result(study_id, report, isa_json=isa_json, include_root_causes=include_root_causes),
+            validation_file,
+            indent=2,
+        )
         validation_file.write("\n")
+    return output_path
+
+
+def save_isa_json(study_id, isa_json, isa_json_file_path=None):
+    output_path = Path(isa_json_file_path).expanduser() if isa_json_file_path else get_default_isa_json_path(study_id)
+    output_path = output_path.resolve()
+    if output_path.exists() and output_path.is_dir():
+        raise SubmissionAPIError(f"ISA JSON path is a directory: {output_path}")
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with output_path.open("w", encoding="utf-8") as isa_json_file:
+        json.dump(isa_json, isa_json_file, indent=2)
+        isa_json_file.write("\n")
     return output_path

@@ -1,5 +1,6 @@
 from mtblspy.config import (
     DEFAULT_BASE_URL,
+    clear_session,
     get_api_key,
     get_base_url,
     get_config,
@@ -18,6 +19,7 @@ class FakeCredentialStore:
         self.user_name = None
         self.jwt_tokens = {}
         self.refresh_tokens = {}
+        self.cleared_session = None
 
     def get_api_token(self):
         return self.api_token
@@ -42,6 +44,9 @@ class FakeCredentialStore:
 
     def set_refresh_token(self, rest_api_base_url, refresh_token):
         self.refresh_tokens[rest_api_base_url] = refresh_token
+
+    def clear_session(self, rest_api_base_url=None, submission_api_base_url=None):
+        self.cleared_session = (rest_api_base_url, submission_api_base_url)
 
 
 def configure_fake_credentials(monkeypatch):
@@ -100,3 +105,14 @@ def test_refresh_token_uses_keyring(monkeypatch):
 
     assert fake_store.refresh_tokens == {"https://test.com/metabolights/ws3": "refresh-token"}
     assert get_refresh_token("https://test.com/metabolights/ws3") == "refresh-token"
+
+
+def test_clear_session_uses_keyring(monkeypatch):
+    fake_store = configure_fake_credentials(monkeypatch)
+
+    clear_session("https://test.com/metabolights/ws", "https://test.com/metabolights/ws3")
+
+    assert fake_store.cleared_session == (
+        "https://test.com/metabolights/ws",
+        "https://test.com/metabolights/ws3",
+    )

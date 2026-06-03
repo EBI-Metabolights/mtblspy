@@ -1,4 +1,5 @@
 import json
+import os
 
 import click
 
@@ -10,8 +11,9 @@ from mtblspy.commands.submissions.models import StudyInputFormat
 @click.command(name="create", short_help="Create a provisional study.")
 @click.option(
     "--input-file",
-    type=click.Path(exists=True, dir_okay=False),
-    required=True,
+    type=click.Path(exists=True, dir_okay=False, resolve_path=True),
+    default=os.path.expanduser("~/metabolights_data/submission/data/study_input.json"),
+    show_default=True,
     help="Path to the study creation input file.",
 )
 @click.option(
@@ -22,7 +24,11 @@ from mtblspy.commands.submissions.models import StudyInputFormat
     help="Study creation input format.",
 )
 def create_submission(input_file, input_format):
-    """Create a new provisional study from a study creation request."""
+    """
+    Create a new provisional study from a study creation request.
+
+    If no input file is provided, it defaults to metabolights-data/submission/data/study_input.json.
+    """
     try:
         client = SubmissionClient()
         click.echo(f"Creating provisional study from {input_format} input: {input_file}...")

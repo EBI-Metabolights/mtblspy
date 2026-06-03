@@ -5,6 +5,10 @@ import pytest
 
 from mtblspy.commands.submissions.client import (
     SubmissionClient,
+    enrich_validation_errors_with_isa_json,
+    format_validation_error,
+    get_validation_errors,
+    get_validation_result,
     get_keycloak_token_url,
     get_studies_from_user_response,
     save_sample_study_input,
@@ -558,7 +562,8 @@ def test_validate_study_retries_transient_task_not_found_and_saves_report(
 
     assert result.errors == []
     assert json.loads(report_path.read_text(encoding="utf-8")) == {
-        "messages": {"summary": [], "violations": []}
+        "messages": {"summary": [], "violations": []},
+        "accession": "MTBLS123",
     }
     mock_sleep.assert_called_once_with(5)
     validation_headers = {"accept": "application/json", "Authorization": "Bearer jwt-token"}
@@ -707,6 +712,308 @@ def test_submit_study_blocks_status_update_when_validation_errors(
         )
 
     mock_put.assert_not_called()
+
+
+def test_validation_errors_include_nested_root_cause_details():
+    report = {
+        "content": {
+            "taskResult": {
+                "messages": {
+                    "violations": [
+                        {
+                            "type": "ERROR",
+                            "section": "Assay",
+                            "title": "Referenced data file is missing",
+                            "sourceFile": "a_MTBLS123_lc-ms.txt",
+                            "lineNumber": 12,
+                            "column": "Raw Spectral Data File",
+                            "ruleId": "ASSAY_FILE_EXISTS",
+                            "value": "FILES/missing.raw",
+                        }
+                    ]
+                }
+            }
+        }
+    }
+
+    errors = get_validation_errors(report)
+
+    assert len(errors) == 1
+    assert format_validation_error(errors[0]) == (
+        "Assay: Referenced data file is missing | "
+        "location=a_MTBLS123_lc-ms.txt:12:Raw Spectral Data File | "
+        "field=Raw Spectral Data File | rule=ASSAY_FILE_EXISTS | value=FILES/missing.raw"
+    )
+
+
+def test_validation_errors_can_be_enriched_from_isa_json_path():
+    isa_json = {
+        "investigation": {
+            "studies": [
+                {
+                    "title": "",
+                }
+            ]
+        }
+    }
+    errors = [
+        {
+            "type": "ERROR",
+            "section": "Study",
+            "title": "Study title is required",
+            "jsonPath": "$.investigation.studies[0].title",
+        }
+    ]
+
+    enriched_errors = enrich_validation_errors_with_isa_json(errors, isa_json)
+
+    assert enriched_errors[0]["value"] == ""
+
+
+def test_validation_result_extracts_v2_policy_root_causes():
+    report = {
+        "content": {
+            "task": {
+                "task_id": "validation-task-1",
+                "task_status": "SUCCESS",
+                "ready": True,
+                "is_successful": True,
+            },
+            "task_result": {
+                "resourceId": "MTBLS123",
+                "messages": {
+                    "summary": [],
+                    "violations": [
+                        {
+                            "type": "ERROR",
+                            "identifier": "rule_a_100_001",
+                            "title": "Referenced raw data file is missing",
+                            "violation": "Raw data file 'missing.raw' is referenced but was not found.",
+                            "section": "Assay",
+                            "sourceFile": "a_MTBLS123_lc-ms.txt",
+                            "sourceColumnHeader": "Raw Spectral Data File",
+                            "sourceColumnIndex": 12,
+                            "values": ["missing.raw"],
+                        }
+                    ],
+                },
+            },
+        }
+    }
+
+    errors = get_validation_errors(report)
+    validation_result = get_validation_result("mtbls123", report, include_root_causes=True)
+
+    assert format_validation_error(errors[0]) == (
+        "Assay: Raw data file 'missing.raw' is referenced but was not found. | "
+        "location=a_MTBLS123_lc-ms.txt | field=Raw Spectral Data File | "
+        "rule=rule_a_100_001 | value=missing.raw"
+    )
+    assert validation_result["accession"] == "MTBLS123"
+    assert validation_result["rootCauses"] == [
+        {
+            "section": "Assay",
+            "message": "Raw data file 'missing.raw' is referenced but was not found.",
+            "title": "Referenced raw data file is missing",
+            "location": "a_MTBLS123_lc-ms.txt",
+            "field": "Raw Spectral Data File",
+            "rule": "rule_a_100_001",
+            "columnIndex": 12,
+            "value": ["missing.raw"],
+        }
+    ]
+
+
+@patch("mtblspy.commands.submissions.client.requests.get")
+@patch("mtblspy.commands.submissions.client.requests.post")
+@patch("mtblspy.commands.submissions.client.get_jwt_token")
+@patch("mtblspy.commands.submissions.client.get_base_url")
+def test_validate_study_fetches_isa_json_and_posts_it_to_validation_api(
+    mock_get_base_url,
+    mock_get_jwt_token,
+    mock_post,
+    mock_get,
+    tmp_path,
+):
+    mock_get_base_url.return_value = "https://wwwdev.ebi.ac.uk/metabolights/ws"
+    mock_get_jwt_token.return_value = "jwt-token"
+    isa_json = {
+        "investigation": {
+            "studies": [
+                {
+                    "title": "Metadata Test Study",
+                    "studyDesignDescriptors": [{"annotationValue": "metabolite profiling"}],
+                }
+            ]
+        }
+    }
+    study_response = MagicMock()
+    study_response.json.return_value = {"content": {"study": isa_json}}
+    mock_get.return_value = study_response
+
+    validation_response = MagicMock()
+    validation_response.status_code = 200
+    validation_response.json.return_value = {
+        "status": "success",
+        "content": {
+            "task": {
+                "taskId": "validation-task-1",
+                "taskStatus": "SUCCESS",
+                "ready": True,
+                "isSuccessful": True,
+            },
+            "taskResult": {"messages": {"summary": [], "violations": []}},
+        },
+    }
+    mock_post.return_value = validation_response
+
+    result = SubmissionClient(api_token="valid-key").validate_study(
+        "MTBLS123",
+        validation_file_path=tmp_path / "validation-report.json",
+        use_isa_json=True,
+    )
+
+    assert result.errors == []
+    mock_get.assert_called_once_with(
+        "https://wwwdev.ebi.ac.uk/metabolights/ws/studies/MTBLS123",
+        headers={"user-token": "valid-key"},
+        timeout=30,
+    )
+    mock_post.assert_called_once()
+    assert mock_post.call_args.args[0] == "https://wwwdev.ebi.ac.uk/metabolights/ws3/submissions/v2/validations/MTBLS123"
+    assert mock_post.call_args.kwargs["json"] == isa_json
+
+
+@patch("mtblspy.commands.submissions.client.requests.get")
+@patch("mtblspy.commands.submissions.client.requests.post")
+@patch("mtblspy.commands.submissions.client.get_jwt_token")
+@patch("mtblspy.commands.submissions.client.get_base_url")
+def test_find_validation_root_causes_saves_isa_json_and_enriched_report(
+    mock_get_base_url,
+    mock_get_jwt_token,
+    mock_post,
+    mock_get,
+    tmp_path,
+):
+    mock_get_base_url.return_value = "https://wwwdev.ebi.ac.uk/metabolights/ws"
+    mock_get_jwt_token.return_value = "jwt-token"
+    isa_json = {
+        "investigation": {
+            "studies": [
+                {
+                    "title": "",
+                }
+            ]
+        }
+    }
+    study_response = MagicMock()
+    study_response.json.return_value = {"content": {"study": isa_json}}
+    mock_get.return_value = study_response
+
+    validation_response = MagicMock()
+    validation_response.status_code = 200
+    validation_response.json.return_value = {
+        "status": "success",
+        "content": {
+            "task": {
+                "taskId": "validation-task-1",
+                "taskStatus": "SUCCESS",
+                "ready": True,
+                "isSuccessful": True,
+            },
+            "taskResult": {
+                "messages": {
+                    "summary": [],
+                    "violations": [
+                        {
+                            "type": "ERROR",
+                            "section": "Study",
+                            "title": "Study title is required",
+                            "jsonPath": "$.investigation.studies[0].title",
+                            "identifier": "rule_i_100_001",
+                        }
+                    ],
+                }
+            },
+        },
+    }
+    mock_post.return_value = validation_response
+    isa_json_path = tmp_path / "MTBLS123.json"
+    report_path = tmp_path / "validation-debug.json"
+
+    result = SubmissionClient(api_token="valid-key").find_validation_root_causes(
+        "mtbls123",
+        isa_json_file_path=isa_json_path,
+        validation_file_path=report_path,
+    )
+
+    saved_isa_json = json.loads(isa_json_path.read_text(encoding="utf-8"))
+    saved_report = json.loads(report_path.read_text(encoding="utf-8"))
+    assert result.isa_json_path == isa_json_path.resolve()
+    assert result.validation_result.report_path == report_path.resolve()
+    assert saved_isa_json == isa_json
+    assert saved_report["accession"] == "MTBLS123"
+    assert saved_report["rootCauses"] == [
+        {
+            "section": "Study",
+            "message": "Study title is required",
+            "field": "$.investigation.studies[0].title",
+            "rule": "rule_i_100_001",
+            "value": "",
+        }
+    ]
+
+
+@patch("mtblspy.commands.submissions.client.requests.post")
+@patch("mtblspy.commands.submissions.client.get_jwt_token")
+@patch("mtblspy.commands.submissions.client.get_base_url")
+def test_validate_study_saves_accession_without_root_causes_by_default(
+    mock_get_base_url,
+    mock_get_jwt_token,
+    mock_post,
+    tmp_path,
+):
+    mock_get_base_url.return_value = "https://wwwdev.ebi.ac.uk/metabolights/ws"
+    mock_get_jwt_token.return_value = "jwt-token"
+    validation_start_response = MagicMock()
+    validation_start_response.json.return_value = {
+        "status": "success",
+        "content": {
+            "task": {
+                "taskId": "validation-task-1",
+                "taskStatus": "SUCCESS",
+                "ready": True,
+                "isSuccessful": True,
+            },
+            "taskResult": {
+                "messages": {
+                    "summary": [],
+                    "violations": [
+                        {
+                            "type": "ERROR",
+                            "section": "Study",
+                            "title": "Missing required metadata",
+                            "sourceFile": "i_Investigation.txt",
+                            "line": 4,
+                            "rule": "INVESTIGATION_TITLE_REQUIRED",
+                        }
+                    ],
+                }
+            },
+        },
+    }
+    mock_post.return_value = validation_start_response
+    report_path = tmp_path / "validation-report.json"
+
+    result = SubmissionClient(api_token="valid-key").validate_study(
+        "mtbls123",
+        validation_file_path=report_path,
+    )
+
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    assert result.errors[0]["title"] == "Missing required metadata"
+    assert report["accession"] == "MTBLS123"
+    assert "rootCauses" not in report
 
 
 @patch("mtblspy.commands.submissions.client.time.sleep")
