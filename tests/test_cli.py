@@ -4,7 +4,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from click.testing import CliRunner
 
-from mtblspy.commands.submissions.client import MetadataUploadResult
+from mtblspy.commands.submissions.client import MetadataUploadResult, ValidationResult, ValidationRootCauseResult
 from mtblspy.commands.submissions.models import FtpUploadDetails
 from mtblspy.commands.cli import cli
 
@@ -271,6 +271,68 @@ def test_submission_validate_prints_report(mock_client_cls, runner, tmp_path):
     assert "Validation completed successfully. No validation errors found." in result.output
     assert '{"messages": {"violations": []}}' in result.output
     assert f"Validation report is saved as {report_path}" in result.output
+    client.validate_study.assert_called_once_with(
+        "MTBLS123",
+        validation_file_path=str(report_path),
+        max_polls=120,
+        poll_interval=5,
+    )
+
+
+@patch("mtblspy.commands.submissions.submission_validation_debug.SubmissionClient")
+def test_submission_validation_debug_command(mock_client_cls, runner, tmp_path):
+    isa_json_path = tmp_path / "MTBLS123.json"
+    report_path = tmp_path / "validation-debug.json"
+
+    client = MagicMock()
+    client.find_validation_root_causes.return_value = ValidationRootCauseResult(
+        isa_json_path=isa_json_path,
+        validation_result=ValidationResult(
+            report={"messages": {"violations": []}},
+            errors=[
+                {
+                    "type": "ERROR",
+                    "section": "Assay",
+                    "violation": "Raw data file 'missing.raw' is referenced but was not found.",
+                    "sourceFile": "a_MTBLS123_lc-ms.txt",
+                    "sourceColumnHeader": "Raw Spectral Data File",
+                    "identifier": "rule_a_100_001",
+                    "values": ["missing.raw"],
+                }
+            ],
+            report_path=report_path,
+        ),
+    )
+    mock_client_cls.return_value = client
+
+    help_result = runner.invoke(cli, ["submission", "--help"])
+    result = runner.invoke(
+        cli,
+        [
+            "submission",
+            "validation-debug",
+            "MTBLS123",
+            "--isa-json-file-path",
+            str(isa_json_path),
+            "--validation-file-path",
+            str(report_path),
+        ],
+    )
+
+    assert help_result.exit_code == 0
+    assert "validation-debug" in help_result.output
+    assert result.exit_code == 0
+    assert "Validation completed with 1 error(s)." in result.output
+    assert "Raw data file 'missing.raw' is referenced but was not found." in result.output
+    assert f"ISA JSON is saved as {isa_json_path}" in result.output
+    assert f"Validation root-cause report is saved as {report_path}" in result.output
+    client.find_validation_root_causes.assert_called_once_with(
+        "MTBLS123",
+        isa_json_file_path=str(isa_json_path),
+        validation_file_path=str(report_path),
+        max_polls=120,
+        poll_interval=5,
+    )
 
 
 @patch("mtblspy.commands.submissions.submission_submit.SubmissionClient")
