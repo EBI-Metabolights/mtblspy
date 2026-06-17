@@ -1,10 +1,12 @@
 import click
 
-from mtblspy.commands.submissions.client import SubmissionClient
+from mtblspy.commands.output import json_output_option, save_json_output
+from mtblspy.commands.submissions.client import DEFAULT_LOCAL_SUBMISSION_CACHE_PATH, SubmissionClient
 
 
 @click.command(name="list")
-def list_submissions():
+@json_output_option("Save the studies list as JSON. Filename-only values are saved to the submission cache.")
+def list_submissions(output):
     """List studies created by the user."""
     try:
         client = SubmissionClient()
@@ -12,6 +14,15 @@ def list_submissions():
         studies = client.list_studies()
     except Exception as exc:
         raise click.ClickException(str(exc)) from exc
+
+    if output:
+        output_path = save_json_output(
+            studies,
+            output,
+            DEFAULT_LOCAL_SUBMISSION_CACHE_PATH,
+            "studies.json",
+        )
+        click.echo(f"Studies JSON saved to {output_path}")
 
     if not studies:
         click.echo("No studies found.")

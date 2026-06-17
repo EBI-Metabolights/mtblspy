@@ -121,6 +121,24 @@ def test_submission_list_success(mock_client_cls, runner):
     assert "Test Study" in result.output
 
 
+@patch("mtblspy.commands.submissions.submission_list.SubmissionClient")
+def test_submission_list_writes_json_output(mock_client_cls, runner, tmp_path, monkeypatch):
+    monkeypatch.setattr("mtblspy.commands.submissions.submission_list.DEFAULT_LOCAL_SUBMISSION_CACHE_PATH", tmp_path)
+    client = MagicMock()
+    client.rest_api_base_url = "https://wwwdev.ebi.ac.uk/metabolights/ws"
+    client.list_studies.return_value = [
+        {"accession": "MTBLS123", "status": "Private", "title": "Test Study"}
+    ]
+    mock_client_cls.return_value = client
+
+    result = runner.invoke(cli, ["submission", "list", "-o", "studies.json"])
+
+    assert result.exit_code == 0
+    output_file = tmp_path / "studies.json"
+    assert json.loads(output_file.read_text(encoding="utf-8")) == client.list_studies.return_value
+    assert f"Studies JSON saved to {output_file}" in result.output
+
+
 @patch("mtblspy.commands.submissions.submission_create.SubmissionClient")
 def test_submission_create_json_success(mock_client_cls, runner, tmp_path):
     input_file = tmp_path / "study-create.json"
@@ -147,8 +165,36 @@ def test_submission_create_json_success(mock_client_cls, runner, tmp_path):
     client.create_study.assert_called_once()
 
 
+@patch("mtblspy.commands.submissions.submission_create.SubmissionClient")
+def test_submission_create_writes_json_output(mock_client_cls, runner, tmp_path, monkeypatch):
+    monkeypatch.setattr("mtblspy.commands.submissions.submission_create.DEFAULT_LOCAL_SUBMISSION_CACHE_PATH", tmp_path)
+    input_file = tmp_path / "study-create.json"
+    input_file.write_text(
+        json.dumps(
+            {
+                "title": "Metadata Test Study",
+                "description": "Test Description",
+                "selectedStudyCategories": {"ms-mhd-legacy": ["MS"]},
+                "datasetLicenseAgreement": True,
+                "datasetPolicyAgreement": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+    client = MagicMock()
+    client.create_study.return_value = {"studies": {"MTBLS-NEW": {}}}
+    mock_client_cls.return_value = client
+
+    result = runner.invoke(cli, ["submission", "create", "--input-file", str(input_file), "-o", "response.json"])
+
+    assert result.exit_code == 0
+    output_file = tmp_path / "MTBLS-NEW" / "response.json"
+    assert json.loads(output_file.read_text(encoding="utf-8")) == {"studies": {"MTBLS-NEW": {}}}
+    assert f"Study creation response JSON saved to {output_file}" in result.output
+
+
 def test_submission_sample_input_writes_json(runner, tmp_path):
-    result = runner.invoke(cli, ["submission", "sample-input", "--data-folder", str(tmp_path)])
+    result = runner.invoke(cli, ["submission", "templates", "study-creation-input", "--data-folder", str(tmp_path)])
 
     assert result.exit_code == 0
     output_file = tmp_path / "study_input.json"
@@ -156,6 +202,28 @@ def test_submission_sample_input_writes_json(runner, tmp_path):
     data = json.loads(output_file.read_text(encoding="utf-8"))
     assert data["title"] == "A new study submission"
     assert "Sample study input JSON saved" in result.output
+
+
+def test_submission_study_creation_input_writes_named_output(runner, tmp_path, monkeypatch):
+    monkeypatch.setattr("mtblspy.commands.submissions.client.DEFAULT_STUDY_INPUT_DATA_FOLDER", tmp_path)
+
+    result = runner.invoke(cli, ["submission", "templates", "study-creation-input", "-o", "custom.json"])
+
+    assert result.exit_code == 0
+    output_file = tmp_path / "custom.json"
+    assert output_file.exists()
+    data = json.loads(output_file.read_text(encoding="utf-8"))
+    assert data["title"] == "A new study submission"
+    assert f"Sample study input JSON saved to {output_file}" in result.output
+
+
+def test_submission_templates_help_shows_child_command(runner):
+    result = runner.invoke(cli, ["submission", "templates", "-h"])
+
+    assert result.exit_code == 0
+    assert "Commands:" in result.output
+    assert "study-creation-input" in result.output
+    assert "Create a sample study creation JSON input file." in result.output
 
 
 @patch("mtblspy.commands.submissions.submission_ftp_credentials.SubmissionClient")
@@ -176,6 +244,30 @@ def test_submission_ftp_credentials_success(mock_client_cls, runner):
     assert "ftp-private.ebi.ac.uk" in result.output
     assert "ftp-password" in result.output
     client.get_private_ftp_credentials.assert_called_once_with("MTBLS123")
+
+
+@patch("mtblspy.commands.submissions.submission_ftp_credentials.SubmissionClient")
+def test_submission_ftp_credentials_writes_json_output(mock_client_cls, runner, tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        "mtblspy.commands.submissions.submission_ftp_credentials.DEFAULT_LOCAL_SUBMISSION_CACHE_PATH",
+        tmp_path,
+    )
+    client = MagicMock()
+    client.get_private_ftp_credentials.return_value = FtpUploadDetails(
+        study_id="MTBLS123",
+        ftp_folder="/incoming/MTBLS123",
+        ftp_host="ftp-private.ebi.ac.uk",
+        ftp_user="ftp-user",
+        ftp_password="ftp-password",
+    )
+    mock_client_cls.return_value = client
+
+    result = runner.invoke(cli, ["submission", "ftp-credentials", "MTBLS123", "-o", "ftp.json"])
+
+    assert result.exit_code == 0
+    output_file = tmp_path / "MTBLS123" / "ftp.json"
+    assert json.loads(output_file.read_text(encoding="utf-8"))["ftp_password"] == "ftp-password"
+    assert f"FTP credentials JSON saved to {output_file}" in result.output
 
 
 @patch("mtblspy.commands.submissions.submission_upload_metadata.SubmissionClient")

@@ -11,7 +11,9 @@ from mtblspy.commands.submissions.client import (
     get_validation_result,
     get_keycloak_token_url,
     get_studies_from_user_response,
+    save_isa_json,
     save_sample_study_input,
+    save_validation_report,
 )
 from mtblspy.commands.submissions.exceptions import AuthenticationError, StudyValidationError, SubmissionAPIError
 from mtblspy.commands.submissions.models import StudyInputFormat
@@ -209,6 +211,43 @@ def test_save_sample_study_input_defaults_to_local_submission_data_folder(tmp_pa
     output_path = save_sample_study_input()
 
     assert output_path == tmp_path / "study_input.json"
+    assert output_path.exists()
+
+
+def test_save_sample_study_input_uses_filename_in_default_data_folder(tmp_path, monkeypatch):
+    monkeypatch.setattr("mtblspy.commands.submissions.client.DEFAULT_STUDY_INPUT_DATA_FOLDER", tmp_path)
+
+    output_path = save_sample_study_input(output_path="custom_input.json")
+
+    assert output_path == tmp_path / "custom_input.json"
+    assert output_path.exists()
+
+
+def test_json_download_helpers_use_default_directory_for_filenames(tmp_path, monkeypatch):
+    monkeypatch.setattr("mtblspy.commands.submissions.client.DEFAULT_LOCAL_SUBMISSION_CACHE_PATH", tmp_path)
+
+    validation_path = save_validation_report(
+        "MTBLS123",
+        {"messages": {"summary": [], "violations": []}},
+        validation_file_path="validation.json",
+    )
+    isa_json_path = save_isa_json("MTBLS123", {"study": {"identifier": "MTBLS123"}}, "isa.json")
+
+    assert validation_path == tmp_path / "MTBLS123" / "validation.json"
+    assert isa_json_path == tmp_path / "MTBLS123" / "isa.json"
+
+
+def test_json_download_helpers_keep_explicit_paths(tmp_path, monkeypatch):
+    monkeypatch.setattr("mtblspy.commands.submissions.client.DEFAULT_LOCAL_SUBMISSION_CACHE_PATH", tmp_path / "cache")
+    report_path = tmp_path / "reports" / "validation.json"
+
+    output_path = save_validation_report(
+        "MTBLS123",
+        {"messages": {"summary": [], "violations": []}},
+        validation_file_path=report_path,
+    )
+
+    assert output_path == report_path
     assert output_path.exists()
 
 

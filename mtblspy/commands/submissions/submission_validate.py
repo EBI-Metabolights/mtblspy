@@ -20,9 +20,11 @@ from mtblspy.commands.submissions.client import (
 @click.option(
     "--validation-file-path",
     "--validation_file_path",
+    "--output",
     "-v",
+    "-o",
     type=click.Path(dir_okay=False),
-    help="Path to save the validation report.",
+    help="Path to save the validation report. Filename-only values are saved to the study cache.",
 )
 def validate_submission(study_id, max_polls, poll_interval, validation_file_path):
     """Run validation for a study and show the validation report."""

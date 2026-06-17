@@ -15,9 +15,11 @@ from mtblspy.commands.submissions.exceptions import StudyValidationError, Submis
 @click.option(
     "--validation-file-path",
     "--validation_file_path",
+    "--output",
     "-v",
+    "-o",
     type=click.Path(dir_okay=False),
-    help="Path to save the validation report.",
+    help="Path to save the validation report. Filename-only values are saved to the study cache.",
 )
 @click.option("--validation-max-polls", default=VALIDATION_MAX_POLLS, show_default=True, help="Maximum validation status checks.")
 @click.option(
