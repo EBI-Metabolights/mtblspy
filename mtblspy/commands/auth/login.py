@@ -1,13 +1,15 @@
 import click
 
 from mtblspy.commands.submissions.client import SubmissionClient
-from mtblspy.config import DEFAULT_BASE_URL
 
 
 @click.command(name="login")
 @click.option("--user", "--username", "user_name", envvar="MTBLS_USER", help="MetaboLights username or email.")
 @click.option("--password", envvar="MTBLS_PASSWORD", help="MetaboLights password.")
-@click.option("--base-url", default=DEFAULT_BASE_URL, show_default=True, help="MetaboLights REST API base URL.")
+@click.option(
+    "--base-url",
+    help="MetaboLights REST API base URL. Defaults to saved config, MTBLS_BASE_URL, or production.",
+)
 def login(user_name, password, base_url):
     """Login to MetaboLights using a username and password."""
     if not user_name:

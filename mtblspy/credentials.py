@@ -10,6 +10,7 @@ class CredentialStore:
     service_name = "mtblspy"
     api_token_username = "api-token"
     user_name_username = "user-name"
+    base_url_username = "base-url"
 
     def get_api_token(self):
         return self._get_password(self.api_token_username)
@@ -28,6 +29,12 @@ class CredentialStore:
 
     def delete_user_name(self):
         self._delete_password(self.user_name_username)
+
+    def get_base_url(self):
+        return self._get_password(self.base_url_username)
+
+    def set_base_url(self, base_url):
+        self._set_password(self.base_url_username, base_url)
 
     def get_jwt_token(self, rest_api_base_url):
         return self._get_password(self._jwt_username(rest_api_base_url))

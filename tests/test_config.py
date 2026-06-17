@@ -17,6 +17,7 @@ class FakeCredentialStore:
     def __init__(self):
         self.api_token = None
         self.user_name = None
+        self.base_url = None
         self.jwt_tokens = {}
         self.refresh_tokens = {}
         self.cleared_session = None
@@ -32,6 +33,12 @@ class FakeCredentialStore:
 
     def set_user_name(self, user_name):
         self.user_name = user_name
+
+    def get_base_url(self):
+        return self.base_url
+
+    def set_base_url(self, base_url):
+        self.base_url = base_url
 
     def get_jwt_token(self, rest_api_base_url):
         return self.jwt_tokens.get(rest_api_base_url)
@@ -64,18 +71,28 @@ def test_get_config_uses_default_base_url(monkeypatch):
     assert DEFAULT_BASE_URL == "https://www.ebi.ac.uk/metabolights/ws"
 
 
-def test_save_config_stores_auth_values_in_keyring_only(monkeypatch):
+def test_save_config_stores_auth_values_and_base_url_in_keyring(monkeypatch):
     fake_store = configure_fake_credentials(monkeypatch)
 
     save_config(api_key="test-key", base_url="https://test.com", user_name="user@example.org")
 
     config = get_config()
-    assert config == {"base_url": DEFAULT_BASE_URL}
+    assert config == {"base_url": "https://test.com"}
     assert fake_store.api_token == "test-key"
+    assert fake_store.base_url == "https://test.com"
     assert fake_store.user_name == "user@example.org"
     assert get_api_key() == "test-key"
     assert get_user_name() == "user@example.org"
-    assert get_base_url() == DEFAULT_BASE_URL
+    assert get_base_url() == "https://test.com"
+
+
+def test_save_config_strips_trailing_base_url_slash(monkeypatch):
+    fake_store = configure_fake_credentials(monkeypatch)
+
+    save_config(base_url="https://test.com/metabolights/ws/")
+
+    assert fake_store.base_url == "https://test.com/metabolights/ws"
+    assert get_base_url() == "https://test.com/metabolights/ws"
 
 
 def test_env_vars_override(monkeypatch):

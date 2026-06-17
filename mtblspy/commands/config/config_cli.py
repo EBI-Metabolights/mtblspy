@@ -1,5 +1,6 @@
 import click
 
+from mtblspy.commands.config.config_set import set_config
 from mtblspy.commands.config.config_show import show_config
 
 
@@ -9,3 +10,4 @@ def config_cli():
 
 
 config_cli.add_command(show_config)
+config_cli.add_command(set_config)

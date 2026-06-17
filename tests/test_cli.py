@@ -5,6 +5,7 @@ import pytest
 from click.testing import CliRunner
 
 from mtblspy.commands.submissions.client import MetadataUploadResult, ValidationResult, ValidationRootCauseResult
+from mtblspy.commands.submissions.local_validation import LocalValidationResult
 from mtblspy.commands.submissions.models import FtpUploadDetails
 from mtblspy.commands.cli import cli
 
@@ -36,6 +37,23 @@ def test_auth_login_success(mock_client_cls, runner):
 
     assert result.exit_code == 0
     assert "Tokens and user saved" in result.output
+    client.login.assert_called_once_with("user@example.org", "password")
+
+
+@patch("mtblspy.commands.auth.login.SubmissionClient")
+def test_auth_login_uses_configured_base_url(mock_client_cls, runner, monkeypatch):
+    monkeypatch.setattr("mtblspy.config._CREDENTIAL_STORE.get_base_url", lambda: "https://configured.example/ws")
+    client = MagicMock()
+    client.rest_api_base_url = "https://configured.example/ws"
+    mock_client_cls.return_value = client
+
+    result = runner.invoke(
+        cli,
+        ["auth", "login", "--user", "user@example.org", "--password", "password"],
+    )
+
+    assert result.exit_code == 0
+    mock_client_cls.assert_called_once_with(base_url=None)
     client.login.assert_called_once_with("user@example.org", "password")
 
 
@@ -102,6 +120,18 @@ def test_config_show_prints_effective_config(runner, monkeypatch):
 
     assert result.exit_code == 0
     assert json.loads(result.output) == {"base_url": "https://example.org/metabolights/ws"}
+
+
+@patch("mtblspy.commands.config.config_set.save_config")
+@patch("mtblspy.commands.config.config_set.get_config")
+def test_config_set_saves_base_url(mock_get_config, mock_save_config, runner):
+    mock_get_config.return_value = {"base_url": "https://wwwdev.ebi.ac.uk/metabolights/ws"}
+
+    result = runner.invoke(cli, ["config", "set", "--base-url", "https://wwwdev.ebi.ac.uk/metabolights/ws"])
+
+    assert result.exit_code == 0
+    mock_save_config.assert_called_once_with(base_url="https://wwwdev.ebi.ac.uk/metabolights/ws")
+    assert "Base URL saved: https://wwwdev.ebi.ac.uk/metabolights/ws" in result.output
 
 
 @patch("mtblspy.commands.submissions.submission_list.SubmissionClient")
@@ -368,6 +398,59 @@ def test_submission_validate_prints_report(mock_client_cls, runner, tmp_path):
         validation_file_path=str(report_path),
         max_polls=120,
         poll_interval=5,
+    )
+
+
+def test_submission_help_shows_remote_and_local_validation(runner):
+    result = runner.invoke(cli, ["submission", "--help"])
+
+    assert result.exit_code == 0
+    assert "validate" in result.output
+    assert "validate-local" in result.output
+
+
+@patch("mtblspy.commands.submissions.submission_validate_local.run_local_validation")
+def test_submission_validate_local_command(mock_run_local_validation, runner, tmp_path):
+    report_path = tmp_path / "local-validation-report.json"
+    input_path = tmp_path / "local-validation-input.json"
+    mock_run_local_validation.return_value = LocalValidationResult(
+        report={"status": "success", "errors": []},
+        errors=[],
+        report_path=report_path,
+        validation_input_path=input_path,
+    )
+
+    result = runner.invoke(
+        cli,
+        [
+            "submission",
+            "validate-local",
+            "MTBLS123",
+            "--metadata-path",
+            str(tmp_path),
+            "-o",
+            "local-report.json",
+            "--validation-input-path",
+            str(input_path),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "Local validation completed successfully" in result.output
+    assert f"Local validation report is saved as {report_path}" in result.output
+    mock_run_local_validation.assert_called_once_with(
+        "MTBLS123",
+        metadata_path=str(tmp_path),
+        data_files_path=None,
+        validation_bundle_path="./bundle.tar.gz",
+        validation_bundle_url="https://ebi-metabolights.github.io/mtbls-validation/bundle.tar.gz",
+        refetch_validation_bundle=False,
+        opa_executable_path="opa",
+        validation_file_path="local-report.json",
+        validation_input_path=str(input_path),
+        config_file=None,
+        overridden_rules_file_path=None,
+        timeout=120,
     )
 
 
