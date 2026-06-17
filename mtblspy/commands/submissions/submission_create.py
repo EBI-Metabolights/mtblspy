@@ -3,8 +3,9 @@ import os
 
 import click
 
+from mtblspy.commands.output import json_output_option, save_json_output
 from mtblspy.commands.submissions.cli_utils import get_created_study_id
-from mtblspy.commands.submissions.client import SubmissionClient
+from mtblspy.commands.submissions.client import DEFAULT_LOCAL_SUBMISSION_CACHE_PATH, SubmissionClient
 from mtblspy.commands.submissions.models import StudyInputFormat
 
 
@@ -23,7 +24,8 @@ from mtblspy.commands.submissions.models import StudyInputFormat
     show_default=True,
     help="Study creation input format.",
 )
-def create_submission(input_file, input_format):
+@json_output_option("Save the study creation response as JSON. Filename-only values are saved to the submission cache.")
+def create_submission(input_file, input_format, output):
     """
     Create a new provisional study from a study creation request.
 
@@ -41,4 +43,13 @@ def create_submission(input_file, input_format):
         click.echo(f"Study created successfully: {study_id}")
     else:
         click.echo("Study created successfully.")
+    if output:
+        default_directory = DEFAULT_LOCAL_SUBMISSION_CACHE_PATH / study_id if study_id else DEFAULT_LOCAL_SUBMISSION_CACHE_PATH
+        output_path = save_json_output(
+            result,
+            output,
+            default_directory,
+            "study_create_response.json",
+        )
+        click.echo(f"Study creation response JSON saved to {output_path}")
     click.echo(json.dumps(result, indent=2))

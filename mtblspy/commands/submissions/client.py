@@ -18,6 +18,7 @@ from mtblspy.config import (
     save_jwt_token,
     save_refresh_token,
 )
+from mtblspy.commands.output import resolve_json_output_path, write_json_file
 from mtblspy.commands.submissions.exceptions import AuthenticationError, StudyValidationError, SubmissionAPIError
 from mtblspy.commands.submissions.models import (
     FtpUploadDetails,
@@ -586,19 +587,22 @@ def resolve_study_input_data_folder(data_folder=None):
     return data_folder.resolve()
 
 
-def save_sample_study_input(data_folder=None, overwrite=True):
-    output_path = resolve_study_input_data_folder(data_folder) / DEFAULT_STUDY_INPUT_FILE_NAME
+def save_sample_study_input(data_folder=None, output_path=None, overwrite=True):
+    if output_path:
+        output_path = resolve_json_output_path(
+            output_path,
+            DEFAULT_STUDY_INPUT_DATA_FOLDER,
+            DEFAULT_STUDY_INPUT_FILE_NAME,
+        )
+    else:
+        output_path = resolve_study_input_data_folder(data_folder) / DEFAULT_STUDY_INPUT_FILE_NAME
     if output_path.exists() and not overwrite:
         raise SubmissionAPIError(f"Study input file already exists: {output_path}")
     if output_path.exists() and output_path.is_dir():
         raise SubmissionAPIError(f"Study input path is a directory: {output_path}")
 
-    output_path.parent.mkdir(parents=True, exist_ok=True)
     request = get_default_study_creation_request()
-    with output_path.open("w", encoding="utf-8") as output_file:
-        json.dump(request.model_dump(by_alias=True), output_file, indent=2)
-        output_file.write("\n")
-    return output_path
+    return write_json_file(request.model_dump(by_alias=True), output_path)
 
 
 def is_metadata_filename(filename):
@@ -1235,30 +1239,29 @@ def get_validation_result(study_id, report, isa_json=None, include_root_causes=F
 
 
 def save_validation_report(study_id, report, validation_file_path=None, isa_json=None, include_root_causes=False):
-    output_path = Path(validation_file_path).expanduser() if validation_file_path else get_default_validation_report_path(study_id)
-    output_path = output_path.resolve()
+    default_path = get_default_validation_report_path(study_id)
+    output_path = resolve_json_output_path(
+        validation_file_path,
+        default_path.parent,
+        default_path.name,
+    )
     if output_path.exists() and output_path.is_dir():
         raise SubmissionAPIError(f"Validation report path is a directory: {output_path}")
 
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    with output_path.open("w", encoding="utf-8") as validation_file:
-        json.dump(
-            get_validation_result(study_id, report, isa_json=isa_json, include_root_causes=include_root_causes),
-            validation_file,
-            indent=2,
-        )
-        validation_file.write("\n")
-    return output_path
+    return write_json_file(
+        get_validation_result(study_id, report, isa_json=isa_json, include_root_causes=include_root_causes),
+        output_path,
+    )
 
 
 def save_isa_json(study_id, isa_json, isa_json_file_path=None):
-    output_path = Path(isa_json_file_path).expanduser() if isa_json_file_path else get_default_isa_json_path(study_id)
-    output_path = output_path.resolve()
+    default_path = get_default_isa_json_path(study_id)
+    output_path = resolve_json_output_path(
+        isa_json_file_path,
+        default_path.parent,
+        default_path.name,
+    )
     if output_path.exists() and output_path.is_dir():
         raise SubmissionAPIError(f"ISA JSON path is a directory: {output_path}")
 
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    with output_path.open("w", encoding="utf-8") as isa_json_file:
-        json.dump(isa_json, isa_json_file, indent=2)
-        isa_json_file.write("\n")
-    return output_path
+    return write_json_file(isa_json, output_path)

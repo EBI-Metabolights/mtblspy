@@ -13,6 +13,7 @@ from mtblspy.commands.submissions.client import (
 @click.option(
     "--isa-json-file-path",
     "--isa_json_file_path",
+    "--isa-output",
     "-i",
     type=click.Path(dir_okay=False),
     help="Path to save the fetched ISA JSON. Defaults to the submission cache as <accession>.json.",
@@ -20,9 +21,11 @@ from mtblspy.commands.submissions.client import (
 @click.option(
     "--validation-file-path",
     "--validation_file_path",
+    "--output",
     "-v",
+    "-o",
     type=click.Path(dir_okay=False),
-    help="Path to save the enriched validation root-cause report.",
+    help="Path to save the enriched validation root-cause report. Filename-only values are saved to the study cache.",
 )
 @click.option("--max-polls", default=VALIDATION_MAX_POLLS, show_default=True, help="Maximum validation status checks.")
 @click.option(
