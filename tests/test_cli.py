@@ -1,10 +1,15 @@
 import json
+import zipfile
 from unittest.mock import MagicMock, patch
 
 import pytest
 from click.testing import CliRunner
 
-from mtblspy.commands.submissions.client import MetadataUploadResult, ValidationResult, ValidationRootCauseResult
+from mtblspy.commands.submissions.client import (
+    MetadataUploadResult,
+    ValidationResult,
+    ValidationRootCauseResult,
+)
 from mtblspy.commands.submissions.local_validation import LocalValidationResult
 from mtblspy.commands.submissions.models import FtpUploadDetails
 from mtblspy.commands.cli import cli
@@ -405,8 +410,87 @@ def test_submission_help_shows_remote_and_local_validation(runner):
     result = runner.invoke(cli, ["submission", "--help"])
 
     assert result.exit_code == 0
+    assert "compress-data-files" in result.output
     assert "validate" in result.output
     assert "validate-local" in result.output
+
+
+def test_submission_compress_data_files_zips_dot_d_and_updates_metadata(runner, tmp_path):
+    study_path = tmp_path / "MTBLS123"
+    data_directory = study_path / "FILES" / "sample 01.d"
+    data_directory.mkdir(parents=True)
+    (data_directory / "analysis.bin").write_bytes(b"raw-data")
+    metadata_file = study_path / "a_MTBLS123_lc-ms.txt"
+    metadata_file.write_text(
+        "Raw Spectral Data File\tDerived Spectral Data File\n"
+        "FILES/sample 01.d\tFILES/sample 01.d.zip\n",
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(
+        cli,
+        ["submission", "compress-data-files", "MTBLS123", "--study-path", str(study_path)],
+    )
+
+    zip_path = study_path / "FILES" / "sample 01.d.zip"
+    assert result.exit_code == 0
+    assert zip_path.exists()
+    with zipfile.ZipFile(zip_path) as archive:
+        assert archive.namelist() == ["sample 01.d/analysis.bin"]
+    assert data_directory.exists()
+    assert metadata_file.read_text(encoding="utf-8") == (
+        "Raw Spectral Data File\tDerived Spectral Data File\n"
+        "FILES/sample 01.d.zip\tFILES/sample 01.d.zip\n"
+    )
+    assert "Compressed 1 .d directory for MTBLS123." in result.output
+    assert "Updated 1 metadata file(s)." in result.output
+
+
+def test_submission_compress_data_files_skips_existing_zip_without_overwrite(runner, tmp_path):
+    study_path = tmp_path / "MTBLS123"
+    data_directory = study_path / "FILES" / "sample.d"
+    data_directory.mkdir(parents=True)
+    (data_directory / "analysis.bin").write_bytes(b"raw-data")
+    zip_path = study_path / "FILES" / "sample.d.zip"
+    zip_path.write_bytes(b"existing")
+    metadata_file = study_path / "a_MTBLS123_lc-ms.txt"
+    metadata_file.write_text("FILES/sample.d\n", encoding="utf-8")
+
+    result = runner.invoke(
+        cli,
+        ["submission", "compress-data-files", "MTBLS123", "--study-path", str(study_path)],
+    )
+
+    assert result.exit_code == 0
+    assert zip_path.read_bytes() == b"existing"
+    assert metadata_file.read_text(encoding="utf-8") == "FILES/sample.d\n"
+    assert "Compressed 0 .d directories for MTBLS123." in result.output
+    assert "Skipped 1 existing .d.zip file(s)." in result.output
+
+
+def test_submission_compress_data_files_can_remove_original_directories(runner, tmp_path):
+    study_path = tmp_path / "MTBLS123"
+    data_directory = study_path / "FILES" / "sample.d"
+    data_directory.mkdir(parents=True)
+    (data_directory / "analysis.bin").write_bytes(b"raw-data")
+    (study_path / "i_Investigation.txt").write_text("metadata\n", encoding="utf-8")
+
+    result = runner.invoke(
+        cli,
+        [
+            "submission",
+            "compress-data-files",
+            "MTBLS123",
+            "--study-path",
+            str(study_path),
+            "--remove-original",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert (study_path / "FILES" / "sample.d.zip").exists()
+    assert not data_directory.exists()
+    assert "Removed 1 original .d directory." in result.output
 
 
 @patch("mtblspy.commands.submissions.submission_validate_local.run_local_validation")
@@ -457,7 +541,8 @@ def test_submission_validate_local_command(mock_run_local_validation, runner, tm
 @patch("mtblspy.commands.submissions.submission_validation_debug.SubmissionClient")
 def test_submission_validation_debug_command(mock_client_cls, runner, tmp_path):
     isa_json_path = tmp_path / "MTBLS123.json"
-    report_path = tmp_path / "validation-debug.json"
+    remote_report_path = tmp_path / "remote-validation.json"
+    debug_report_path = tmp_path / "validation-debug.json"
 
     client = MagicMock()
     client.find_validation_root_causes.return_value = ValidationRootCauseResult(
@@ -475,7 +560,7 @@ def test_submission_validation_debug_command(mock_client_cls, runner, tmp_path):
                     "values": ["missing.raw"],
                 }
             ],
-            report_path=report_path,
+            report_path=remote_report_path,
         ),
     )
     mock_client_cls.return_value = client
@@ -490,47 +575,109 @@ def test_submission_validation_debug_command(mock_client_cls, runner, tmp_path):
             "--isa-json-file-path",
             str(isa_json_path),
             "--validation-file-path",
-            str(report_path),
+            str(debug_report_path),
+            "--remote-validation-file-path",
+            str(remote_report_path),
         ],
     )
 
     assert help_result.exit_code == 0
     assert "validation-debug" in help_result.output
     assert result.exit_code == 0
-    assert "Validation completed with 1 error(s)." in result.output
+    assert "Remote validation completed with 1 error(s)." in result.output
     assert "Raw data file 'missing.raw' is referenced but was not found." in result.output
     assert f"ISA JSON is saved as {isa_json_path}" in result.output
-    assert f"Validation root-cause report is saved as {report_path}" in result.output
+    assert f"Remote validation root-cause report is saved as {remote_report_path}" in result.output
+    assert f"Combined validation debug report is saved as {debug_report_path}" in result.output
+    saved_debug_report = json.loads(debug_report_path.read_text(encoding="utf-8"))
+    assert saved_debug_report["summary"]["remoteErrorCount"] == 1
+    assert saved_debug_report["summary"]["localErrorCount"] == 0
     client.find_validation_root_causes.assert_called_once_with(
         "MTBLS123",
         isa_json_file_path=str(isa_json_path),
-        validation_file_path=str(report_path),
+        validation_file_path=str(remote_report_path),
         max_polls=120,
         poll_interval=5,
     )
 
 
-@patch("mtblspy.commands.submissions.submission_submit.SubmissionClient")
-def test_submission_submit_blocks_status_update_when_validation_errors(mock_client_cls, runner):
-    from mtblspy.commands.submissions.exceptions import StudyValidationError
+@patch("mtblspy.commands.submissions.submission_validation_debug.run_local_validation")
+@patch("mtblspy.commands.submissions.submission_validation_debug.SubmissionClient")
+def test_submission_validation_debug_command_compares_local_errors(mock_client_cls, mock_run_local_validation, runner, tmp_path):
+    metadata_path = tmp_path / "metadata"
+    metadata_path.mkdir()
+    isa_json_path = tmp_path / "MTBLS123.json"
+    remote_report_path = tmp_path / "remote-validation.json"
+    local_report_path = tmp_path / "local-validation.json"
+    local_input_path = tmp_path / "local-input.json"
+    debug_report_path = tmp_path / "validation-debug.json"
+
+    remote_error = {
+        "type": "ERROR",
+        "section": "general",
+        "violation": "MHD validation failed.",
+        "sourceFile": "input",
+        "identifier": "rule___500_100_001_01",
+    }
+    local_error = {
+        "type": "ERROR",
+        "section": "files.general",
+        "violation": "Referenced raw file is missing.",
+        "sourceFile": "a_MTBLS123.txt",
+        "sourceColumnHeader": "Raw Spectral Data File",
+        "identifier": "rule_f_400_090_001_01",
+    }
 
     client = MagicMock()
-    client.submit_study.side_effect = StudyValidationError(
-        "MTBLS123",
-        [
-            {
-                "type": "ERROR",
-                "title": "Missing required metadata",
-                "section": "Study",
-                "sourceFile": "i_Investigation.txt",
-            }
-        ],
+    client.find_validation_root_causes.return_value = ValidationRootCauseResult(
+        isa_json_path=isa_json_path,
+        validation_result=ValidationResult(
+            report={"messages": {"violations": [remote_error]}},
+            errors=[remote_error],
+            report_path=remote_report_path,
+        ),
     )
     mock_client_cls.return_value = client
+    mock_run_local_validation.return_value = LocalValidationResult(
+        report={"validationResult": {"violations": [local_error]}},
+        errors=[local_error],
+        report_path=local_report_path,
+        validation_input_path=local_input_path,
+    )
 
-    result = runner.invoke(cli, ["submission", "submit", "MTBLS123", "--status", "Private"])
+    result = runner.invoke(
+        cli,
+        [
+            "submission",
+            "validation-debug",
+            "MTBLS123",
+            "-p",
+            str(metadata_path),
+            "--data-files-path",
+            str(metadata_path / "FILES"),
+            "--isa-json-file-path",
+            str(isa_json_path),
+            "-o",
+            str(debug_report_path),
+            "--remote-validation-file-path",
+            str(remote_report_path),
+        ],
+    )
 
-    assert result.exit_code != 0
-    assert "Validation completed with errors" in result.output
-    assert "Missing required metadata" in result.output
-    assert "Study MTBLS123 has 1 validation error(s)." in result.output
+    assert result.exit_code == 0
+    assert "Remote validation completed with 1 error(s)." in result.output
+    assert "Local validation completed with 1 error(s)." in result.output
+    saved_debug_report = json.loads(debug_report_path.read_text(encoding="utf-8"))
+    assert saved_debug_report["summary"] == {
+        "remoteErrorCount": 1,
+        "localErrorCount": 1,
+        "sharedErrorCount": 0,
+        "remoteOnlyErrorCount": 1,
+        "localOnlyErrorCount": 1,
+    }
+    assert saved_debug_report["remote"]["errors"] == [remote_error]
+    assert saved_debug_report["local"]["errors"] == [local_error]
+    assert saved_debug_report["comparison"]["remoteOnlyErrors"][0]["rule"] == "rule___500_100_001_01"
+    assert saved_debug_report["comparison"]["localOnlyErrors"][0]["rule"] == "rule_f_400_090_001_01"
+    mock_run_local_validation.assert_called_once()
+

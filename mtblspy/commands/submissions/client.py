@@ -19,7 +19,7 @@ from mtblspy.config import (
     save_refresh_token,
 )
 from mtblspy.commands.output import resolve_json_output_path, write_json_file
-from mtblspy.commands.submissions.exceptions import AuthenticationError, StudyValidationError, SubmissionAPIError
+from mtblspy.commands.submissions.exceptions import AuthenticationError, SubmissionAPIError
 from mtblspy.commands.submissions.models import (
     FtpUploadDetails,
     StudyCreationRequest,
@@ -47,13 +47,6 @@ class ValidationResult:
 class ValidationRootCauseResult:
     validation_result: ValidationResult
     isa_json_path: Path
-
-
-@dataclass
-class StatusUpdateResult:
-    study_id: str
-    status: str
-    response: dict | None = None
 
 
 @dataclass
@@ -462,34 +455,6 @@ class SubmissionClient:
         errors = enrich_validation_errors_with_isa_json(get_validation_errors(report), isa_json)
         validation_result = ValidationResult(report=report, errors=errors, report_path=report_path)
         return ValidationRootCauseResult(validation_result=validation_result, isa_json_path=isa_json_path)
-
-    def submit_study(
-        self,
-        study_id,
-        status="Submitted",
-        validation_file_path=None,
-        validation_max_polls=VALIDATION_MAX_POLLS,
-        validation_poll_interval=VALIDATION_POLL_INTERVAL_SECONDS,
-    ):
-        study_id = normalize_study_id(study_id)
-        validation_result = self.validate_study(
-            study_id,
-            validation_file_path=validation_file_path,
-            max_polls=validation_max_polls,
-            poll_interval=validation_poll_interval,
-        )
-        if validation_result.errors:
-            raise StudyValidationError(study_id, validation_result.errors)
-
-        response = requests.put(
-            f"{self.rest_api_base_url.rstrip('/')}/studies/{study_id}/status",
-            headers=self.get_auth_headers(),
-            json={"status": status},
-            timeout=30,
-        )
-        response.raise_for_status()
-        response_data = response.json() if response.content else None
-        return StatusUpdateResult(study_id=study_id, status=status, response=response_data)
 
     def run_study_validation(
         self,
