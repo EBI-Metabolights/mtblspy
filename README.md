@@ -1,6 +1,6 @@
 # mtblspy
 
-`mtblspy` is a Python command-line client for the MetaboLights study submission workflow. It helps submitters authenticate, create provisional studies, manage study metadata, run validation, download validation reports as JSON, retrieve private FTP credentials, and submit studies for review.
+`mtblspy` is a Python command-line client for the MetaboLights study submission workflow. It helps submitters authenticate, create provisional studies, manage study metadata, run validation, download validation reports as JSON, and retrieve private FTP credentials.
 
 The installed command is:
 
@@ -21,7 +21,6 @@ mtbls
 | Metadata upload | Upload ISA-Tab metadata files for a study |
 | Validation | Run remote API validation or local validation with the MetaboLights validation bundle |
 | Data upload | Retrieve private FTP credentials for study data upload |
-| Submission | Submit a validated study for review |
 
 ## Infrastructure View
 
@@ -381,24 +380,18 @@ mtbls submission ftp-credentials MTBLS123 -o ftp_credentials.json
 
 Use the returned host, user, password, and folder with your preferred FTP/SFTP client according to the current MetaboLights upload instructions.
 
-### 8. Submit The Study For Review
+### 8. Compress Agilent `.d` Data Folders
 
-The submit command runs validation first. If validation errors are found, the study status is not changed.
+Compress local `.d` directories in the study `FILES/` folder before uploading data files:
 
 ```bash
-mtbls submission submit MTBLS123
+mtbls submission compress-data-files MTBLS123 --study-path ./MTBLS123
 ```
 
-Save the validation report used during submission:
+This creates `.d.zip` files and updates ISA-Tab metadata references from `.d` to `.d.zip`. Original `.d` directories are kept by default. Remove them after successful compression with:
 
 ```bash
-mtbls submission submit MTBLS123 -o submit_validation.json
-```
-
-Use a custom target status:
-
-```bash
-mtbls submission submit MTBLS123 --status Submitted
+mtbls submission compress-data-files MTBLS123 --study-path ./MTBLS123 --remove-original
 ```
 
 ## JSON Output And File Locations
@@ -480,9 +473,9 @@ mtbls --help
 | `mtbls submission create` | Create a provisional study from a JSON input file |
 | `mtbls submission ftp-credentials STUDY_ID` | Get private FTP upload credentials |
 | `mtbls submission upload-metadata STUDY_ID` | Upload ISA-Tab metadata files |
+| `mtbls submission compress-data-files STUDY_ID` | Compress local `.d` data folders to `.d.zip` files |
 | `mtbls submission validate STUDY_ID` | Run remote study validation through the MetaboLights submission API |
 | `mtbls submission validate-local STUDY_ID` | Run local validation with OPA and the MetaboLights validation bundle |
-| `mtbls submission submit STUDY_ID` | Validate and submit the study for review |
 | `mtbls submission templates study-creation-input` | Generate a study creation JSON template |
 
 ## Study Creation Input

@@ -15,7 +15,7 @@ from mtblspy.commands.submissions.client import (
     save_sample_study_input,
     save_validation_report,
 )
-from mtblspy.commands.submissions.exceptions import AuthenticationError, StudyValidationError, SubmissionAPIError
+from mtblspy.commands.submissions.exceptions import AuthenticationError, SubmissionAPIError
 from mtblspy.commands.submissions.models import StudyInputFormat
 
 
@@ -708,49 +708,6 @@ def test_validate_study_raises_when_jwt_exchange_fails_without_calling_legacy_en
         )
 
     mock_post.assert_not_called()
-
-
-@patch("mtblspy.commands.submissions.client.requests.put")
-@patch("mtblspy.commands.submissions.client.requests.post")
-@patch("mtblspy.commands.submissions.client.get_jwt_token")
-@patch("mtblspy.commands.submissions.client.get_base_url")
-def test_submit_study_blocks_status_update_when_validation_errors(
-    mock_get_base_url,
-    mock_get_jwt_token,
-    mock_post,
-    mock_put,
-    tmp_path,
-):
-    mock_get_base_url.return_value = "https://wwwdev.ebi.ac.uk/metabolights/ws"
-    mock_get_jwt_token.return_value = "jwt-token"
-    validation_start_response = MagicMock()
-    validation_start_response.json.return_value = {
-        "status": "success",
-        "content": {
-            "task": {
-                "taskId": "validation-task-1",
-                "taskStatus": "SUCCESS",
-                "ready": True,
-                "isSuccessful": True,
-            },
-            "taskResult": {
-                "messages": {
-                    "summary": [],
-                    "violations": [{"type": "ERROR", "title": "Missing required metadata", "section": "Study"}],
-                }
-            },
-        },
-    }
-    mock_post.return_value = validation_start_response
-
-    with pytest.raises(StudyValidationError):
-        SubmissionClient(api_token="valid-key").submit_study(
-            "MTBLS123",
-            status="Private",
-            validation_file_path=tmp_path / "validation-report.json",
-        )
-
-    mock_put.assert_not_called()
 
 
 def test_validation_errors_include_nested_root_cause_details():

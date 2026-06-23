@@ -1,9 +1,9 @@
 import click
 
+from mtblspy.commands.submissions.submission_compress_data_files import compress_data_files
 from mtblspy.commands.submissions.submission_create import create_submission
 from mtblspy.commands.submissions.submission_ftp_credentials import private_ftp_credentials
 from mtblspy.commands.submissions.submission_list import list_submissions
-from mtblspy.commands.submissions.submission_submit import submit_submission
 from mtblspy.commands.submissions.submission_templates import submission_templates
 from mtblspy.commands.submissions.submission_upload_metadata import upload_metadata
 from mtblspy.commands.submissions.submission_validate import validate_submission
@@ -23,8 +23,8 @@ submission_cli.add_command(upload_metadata)
 submission_cli.add_command(validate_submission)
 submission_cli.add_command(validate_local_submission)
 # submission_cli.add_command(validation_debug)
-submission_cli.add_command(submit_submission)
 submission_cli.add_command(submission_templates)
+submission_cli.add_command(compress_data_files)
 
 
 if __name__ == "__main__":
