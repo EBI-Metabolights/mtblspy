@@ -1100,3 +1100,38 @@ def test_upload_metadata_defaults_to_local_submission_data_folder(
 
     assert [path.name for path in result.uploaded_files] == ["i_Investigation.txt"]
     mock_post.assert_called_once()
+
+
+@patch("mtblspy.commands.submissions.client.requests.post")
+@patch("mtblspy.commands.submissions.client.get_api_key")
+@patch("mtblspy.commands.submissions.client.get_base_url")
+def test_upload_metadata_uploads_selected_files_and_reports_skipped_files(
+    mock_get_base_url,
+    mock_get_api_key,
+    mock_post,
+    tmp_path,
+):
+    mock_get_base_url.return_value = "https://wwwdev.ebi.ac.uk/metabolights/ws"
+    mock_get_api_key.return_value = "valid-key"
+    (tmp_path / "i_Investigation.txt").write_text("investigation", encoding="utf-8")
+    (tmp_path / "s_MTBLS123.txt").write_text("samples", encoding="utf-8")
+    (tmp_path / "a_assay.txt").write_text("assay", encoding="utf-8")
+
+    response = MagicMock()
+    response.status_code = 201
+    response.content = b'{"success": true}'
+    response.json.return_value = {"success": True}
+    mock_post.return_value = response
+
+    result = SubmissionClient().upload_metadata(
+        "MTBLS123",
+        metadata_path=tmp_path,
+        selected_files="i_Investigation.txt,a_assay.txt",
+    )
+
+    assert [path.name for path in result.uploaded_files] == ["i_Investigation.txt", "a_assay.txt"]
+    assert [path.name for path in result.skipped_files] == ["s_MTBLS123.txt"]
+    assert [call.kwargs["files"]["file"][0] for call in mock_post.call_args_list] == [
+        "i_Investigation.txt",
+        "a_assay.txt",
+    ]

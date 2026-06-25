@@ -308,72 +308,86 @@ def test_submission_ftp_credentials_writes_json_output(mock_client_cls, runner, 
 @patch("mtblspy.commands.submissions.submission_upload_metadata.SubmissionClient")
 def test_submission_upload_metadata_success(mock_client_cls, runner, tmp_path):
     metadata_file = tmp_path / "i_Investigation.txt"
+    skipped_file = tmp_path / "s_MTBLS123.txt"
     metadata_file.write_text("metadata", encoding="utf-8")
+    skipped_file.write_text("samples", encoding="utf-8")
     client = MagicMock()
+    client.rest_api_base_url = "https://www.ebi.ac.uk/metabolights/ws"
     client.upload_metadata.return_value = MetadataUploadResult(
         study_id="MTBLS123",
         uploaded_files=[metadata_file],
+        skipped_files=[skipped_file],
         responses=[{"success": True}],
     )
     mock_client_cls.return_value = client
 
     result = runner.invoke(
         cli,
-        ["submission", "upload-metadata", "MTBLS123", "--metadata-path", str(tmp_path)],
+        [
+            "submission",
+            "metadata-upload",
+            "MTBLS123",
+            "--metadata-files-path",
+            str(tmp_path),
+            "--selected-files",
+            "i_Investigation.txt",
+        ],
     )
 
     assert result.exit_code == 0
-    assert "Uploaded 1 metadata file(s) for MTBLS123." in result.output
-    assert "i_Investigation.txt" in result.output
-    client.upload_metadata.assert_called_once_with(
-        "MTBLS123",
-        metadata_path=str(tmp_path),
-        metadata_files=(),
-        validate_after_upload=True,
-        validation_file_path=None,
-        validation_max_polls=120,
-        validation_poll_interval=5,
+    payload = json.loads(result.output)
+    assert payload["status"] == "success"
+    assert payload["uploaded_files"] == ["i_Investigation.txt"]
+    assert payload["Skipped_files"] == ["s_MTBLS123.txt"]
+    assert payload["Message"] == "Uploaded 1 metadata file(s) for MTBLS123."
+    client.upload_metadata.assert_called_once()
+    assert client.upload_metadata.call_args.args == ("MTBLS123",)
+    assert client.upload_metadata.call_args.kwargs["metadata_path"] == str(tmp_path)
+    assert client.upload_metadata.call_args.kwargs["selected_files"] == ["i_Investigation.txt"]
+    assert client.upload_metadata.call_args.kwargs["default_submission_data_path"].endswith(
+        "/metabolights_data/submission/data"
     )
 
 
 @patch("mtblspy.commands.submissions.submission_upload_metadata.SubmissionClient")
-def test_submission_upload_metadata_prints_validation_errors(mock_client_cls, runner, tmp_path):
+def test_submission_upload_metadata_writes_json_output(mock_client_cls, runner, tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        "mtblspy.commands.submissions.submission_upload_metadata.DEFAULT_LOCAL_SUBMISSION_CACHE_PATH",
+        tmp_path / "cache",
+    )
     metadata_file = tmp_path / "i_Investigation.txt"
     metadata_file.write_text("metadata", encoding="utf-8")
-    report_path = tmp_path / "validation-report.json"
-
-    validation_result = MagicMock()
-    validation_result.errors = [
-        {
-            "type": "ERROR",
-            "section": "Study",
-            "title": "Missing required metadata",
-            "sourceFile": "i_Investigation.txt",
-            "line": 4,
-            "rule": "INVESTIGATION_TITLE_REQUIRED",
-        }
-    ]
-    validation_result.report_path = report_path
 
     client = MagicMock()
+    client.rest_api_base_url = "https://upload.example/metabolights/ws"
     client.upload_metadata.return_value = MetadataUploadResult(
         study_id="MTBLS123",
         uploaded_files=[metadata_file],
         responses=[{"success": True}],
-        validation_result=validation_result,
     )
     mock_client_cls.return_value = client
 
     result = runner.invoke(
         cli,
-        ["submission", "upload-metadata", "MTBLS123", "--metadata-path", str(tmp_path)],
+        [
+            "submission",
+            "metadata-upload",
+            "MTBLS123",
+            "--metadata-files-path",
+            str(tmp_path),
+            "--mtbls-submission-endpoint",
+            "upload.example/metabolights/ws",
+            "-o",
+            "upload.json",
+        ],
     )
 
     assert result.exit_code == 0
-    assert "Validation completed with 1 error(s)." in result.output
-    assert "Missing required metadata" in result.output
-    assert "location=i_Investigation.txt:4" in result.output
-    assert f"Validation report is saved as {report_path}" in result.output
+    output_file = tmp_path / "cache" / "MTBLS123" / "upload.json"
+    payload = json.loads(output_file.read_text(encoding="utf-8"))
+    assert payload["parameters"][3]["value"] == "https://upload.example/metabolights/ws"
+    assert payload["uploaded_files"] == ["i_Investigation.txt"]
+    mock_client_cls.assert_called_once_with(base_url="https://upload.example/metabolights/ws")
 
 
 @patch("mtblspy.commands.submissions.submission_validate.SubmissionClient")
@@ -680,4 +694,3 @@ def test_submission_validation_debug_command_compares_local_errors(mock_client_c
     assert saved_debug_report["comparison"]["remoteOnlyErrors"][0]["rule"] == "rule___500_100_001_01"
     assert saved_debug_report["comparison"]["localOnlyErrors"][0]["rule"] == "rule_f_400_090_001_01"
     mock_run_local_validation.assert_called_once()
-

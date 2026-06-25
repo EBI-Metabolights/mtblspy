@@ -1,82 +1,191 @@
+import json
+from pathlib import Path
+
 import click
 
-from mtblspy.commands.submissions.cli_utils import echo_validation_errors
+from mtblspy.commands.output import save_json_output
 from mtblspy.commands.submissions.client import (
-    VALIDATION_MAX_POLLS,
-    VALIDATION_POLL_INTERVAL_SECONDS,
+    DEFAULT_LOCAL_SUBMISSION_CACHE_PATH,
+    DEFAULT_LOCAL_SUBMISSION_DATA_PATH,
     SubmissionClient,
+    normalize_study_id,
+    parse_selected_metadata_files,
 )
 from mtblspy.commands.submissions.exceptions import SubmissionError
 
 
-@click.command(name="upload-metadata")
+@click.command(name="metadata-upload")
 @click.argument("study_id")
-@click.argument("metadata_files", nargs=-1, type=click.Path(dir_okay=False))
 @click.option(
+    "--default-submission-data-path",
+    type=click.Path(file_okay=False),
+    default=str(DEFAULT_LOCAL_SUBMISSION_DATA_PATH),
+    show_default=True,
+    help="Parent folder for local study metadata folders.",
+)
+@click.option(
+    "--metadata-files-path",
     "--metadata-path",
     "-p",
     type=click.Path(exists=False),
-    help=(
-        "Metadata file or directory. Defaults to "
-        "~/metabolights_data/submission/data/<study_id>."
-    ),
+    help="Metadata folder path. Defaults to <default-submission-data-path>/<study-id>.",
 )
 @click.option(
-    "--validate/--no-validate",
-    default=True,
-    show_default=True,
-    help="Run study validation after successful metadata upload.",
+    "--mtbls-submission-endpoint",
+    type=str,
+    help="MetaboLights REST API endpoint for this upload, overriding configured defaults.",
 )
 @click.option(
-    "--validation-file-path",
-    "--validation_file_path",
+    "--selected-files",
+    type=str,
+    help="Comma-separated metadata file names in the metadata folder to upload.",
+)
+@click.option(
     "--output",
-    "-v",
     "-o",
     type=click.Path(dir_okay=False),
-    help="Path to save the validation report. Filename-only values are saved to the study cache.",
-)
-@click.option("--validation-max-polls", default=VALIDATION_MAX_POLLS, show_default=True, help="Maximum validation status checks.")
-@click.option(
-    "--validation-poll-interval",
-    default=VALIDATION_POLL_INTERVAL_SECONDS,
-    show_default=True,
-    help="Seconds between validation status checks.",
+    help="Save upload options and result as JSON. Filename-only values are saved to the study cache.",
 )
 def upload_metadata(
     study_id,
-    metadata_files,
-    metadata_path,
-    validate,
-    validation_file_path,
-    validation_max_polls,
-    validation_poll_interval,
+    default_submission_data_path,
+    metadata_files_path,
+    mtbls_submission_endpoint,
+    selected_files,
+    output,
 ):
     """Upload ISA-Tab metadata files for a study."""
+    normalized_endpoint = normalize_endpoint(mtbls_submission_endpoint)
+    selected_file_names = parse_selected_metadata_files(selected_files)
+    normalized_study_id = normalize_study_id(study_id)
+    metadata_path = metadata_files_path or str(
+        Path(default_submission_data_path).expanduser() / normalized_study_id
+    )
+
     try:
-        client = SubmissionClient()
+        client = SubmissionClient(base_url=normalized_endpoint)
         result = client.upload_metadata(
             study_id,
-            metadata_path=metadata_path,
-            metadata_files=metadata_files,
-            validate_after_upload=validate,
-            validation_file_path=validation_file_path,
-            validation_max_polls=validation_max_polls,
-            validation_poll_interval=validation_poll_interval,
+            metadata_path=metadata_files_path,
+            selected_files=selected_file_names,
+            default_submission_data_path=default_submission_data_path,
         )
     except SubmissionError as exc:
+        resolved_endpoint = client.rest_api_base_url if "client" in locals() else normalized_endpoint
+        write_failure_output(
+            study_id=normalized_study_id,
+            default_submission_data_path=default_submission_data_path,
+            metadata_files_path=metadata_path,
+            mtbls_submission_endpoint=resolved_endpoint,
+            selected_files=selected_file_names,
+            output=output,
+            message=str(exc),
+        )
         raise click.ClickException(str(exc)) from exc
     except Exception as exc:
+        resolved_endpoint = client.rest_api_base_url if "client" in locals() else normalized_endpoint
+        write_failure_output(
+            study_id=normalized_study_id,
+            default_submission_data_path=default_submission_data_path,
+            metadata_files_path=metadata_path,
+            mtbls_submission_endpoint=resolved_endpoint,
+            selected_files=selected_file_names,
+            output=output,
+            message=str(exc),
+        )
         raise click.ClickException(str(exc)) from exc
 
-    click.echo(f"Uploaded {len(result.uploaded_files)} metadata file(s) for {result.study_id}.")
-    for file_path in result.uploaded_files:
-        click.echo(f"- {file_path.name}")
+    payload = build_upload_metadata_payload(
+        study_id=result.study_id,
+        default_submission_data_path=default_submission_data_path,
+        metadata_files_path=metadata_path,
+        mtbls_submission_endpoint=client.rest_api_base_url,
+        selected_files=selected_file_names,
+        output=output,
+        status="success",
+        uploaded_files=[file_path.name for file_path in result.uploaded_files],
+        skipped_files=[file_path.name for file_path in result.skipped_files],
+        message=f"Uploaded {len(result.uploaded_files)} metadata file(s) for {result.study_id}.",
+    )
 
-    if result.validation_result:
-        if result.validation_result.errors:
-            click.echo(f"Validation completed with {len(result.validation_result.errors)} error(s).")
-            echo_validation_errors(result.validation_result.errors)
-        else:
-            click.echo("Validation completed successfully. No validation errors found.")
-        click.echo(f"Validation report is saved as {result.validation_result.report_path}")
+    if output:
+        output_path = save_metadata_upload_output(payload, output, result.study_id)
+        click.echo(f"Metadata upload JSON saved to {output_path}")
+
+    click.echo(json.dumps(payload, indent=2))
+
+
+def normalize_endpoint(endpoint):
+    if not endpoint:
+        return None
+    endpoint = endpoint.strip().rstrip("/")
+    if not endpoint:
+        return None
+    if "://" not in endpoint:
+        return f"https://{endpoint}"
+    return endpoint
+
+
+def build_upload_metadata_payload(
+    study_id,
+    default_submission_data_path,
+    metadata_files_path,
+    mtbls_submission_endpoint,
+    selected_files,
+    output,
+    status,
+    uploaded_files,
+    skipped_files,
+    message,
+):
+    return {
+        "parameters": [
+            {"name": "study_id", "value": study_id},
+            {"name": "default_submission_data_path", "value": str(default_submission_data_path)},
+            {"name": "metadata_files_path", "value": str(metadata_files_path)},
+            {"name": "mtbls_submission_endpoint", "value": mtbls_submission_endpoint},
+            {"name": "selected_files", "value": selected_files},
+            {"name": "output", "value": output},
+        ],
+        "status": status,
+        "uploaded_files": uploaded_files,
+        "Skipped_files": skipped_files,
+        "Message": message,
+    }
+
+
+def save_metadata_upload_output(payload, output, study_id):
+    default_directory = DEFAULT_LOCAL_SUBMISSION_CACHE_PATH / study_id
+    return save_json_output(
+        payload,
+        output,
+        default_directory,
+        "metadata_upload_response.json",
+    )
+
+
+def write_failure_output(
+    study_id,
+    default_submission_data_path,
+    metadata_files_path,
+    mtbls_submission_endpoint,
+    selected_files,
+    output,
+    message,
+):
+    if not output:
+        return
+    payload = build_upload_metadata_payload(
+        study_id=study_id,
+        default_submission_data_path=default_submission_data_path,
+        metadata_files_path=metadata_files_path,
+        mtbls_submission_endpoint=mtbls_submission_endpoint,
+        selected_files=selected_files,
+        output=output,
+        status="failed",
+        uploaded_files=[],
+        skipped_files=[],
+        message=message,
+    )
+    output_path = save_metadata_upload_output(payload, output, study_id)
+    click.echo(f"Metadata upload JSON saved to {output_path}")

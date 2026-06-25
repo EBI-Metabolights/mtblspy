@@ -1,7 +1,7 @@
 import base64
 import json
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
@@ -54,6 +54,7 @@ class MetadataUploadResult:
     study_id: str
     uploaded_files: list[Path]
     responses: list[Any]
+    skipped_files: list[Path] = field(default_factory=list)
     validation_result: ValidationResult | None = None
 
 
@@ -359,13 +360,22 @@ class SubmissionClient:
         study_id,
         metadata_path=None,
         metadata_files=None,
+        selected_files=None,
+        default_submission_data_path=None,
         validate_after_upload=False,
         validation_file_path=None,
         validation_max_polls=VALIDATION_MAX_POLLS,
         validation_poll_interval=VALIDATION_POLL_INTERVAL_SECONDS,
     ):
         study_id = normalize_study_id(study_id)
-        file_paths = resolve_metadata_file_paths(study_id, metadata_path=metadata_path, metadata_files=metadata_files)
+        file_paths, skipped_files = resolve_metadata_file_paths(
+            study_id,
+            metadata_path=metadata_path,
+            metadata_files=metadata_files,
+            selected_files=selected_files,
+            default_submission_data_path=default_submission_data_path,
+            return_skipped=True,
+        )
         if not file_paths:
             raise SubmissionAPIError("No ISA-Tab metadata files found to upload.")
 
@@ -405,6 +415,7 @@ class SubmissionClient:
         return MetadataUploadResult(
             study_id=study_id,
             uploaded_files=file_paths,
+            skipped_files=skipped_files,
             responses=responses,
             validation_result=validation_result,
         )
@@ -580,21 +591,61 @@ def is_metadata_filename(filename):
     ) or (filename.startswith("m_") and filename.endswith(".tsv"))
 
 
-def resolve_metadata_file_paths(study_id, metadata_path=None, metadata_files=None):
-    base_path = Path(metadata_path).expanduser() if metadata_path else DEFAULT_LOCAL_SUBMISSION_DATA_PATH / study_id
+def parse_selected_metadata_files(selected_files):
+    if not selected_files:
+        return []
+    if isinstance(selected_files, str):
+        raw_files = selected_files.split(",")
+    else:
+        raw_files = selected_files
+
+    parsed_files = []
+    seen = set()
+    for raw_file in raw_files:
+        file_name = str(raw_file).strip()
+        if file_name and file_name not in seen:
+            parsed_files.append(file_name)
+            seen.add(file_name)
+    return parsed_files
+
+
+def resolve_metadata_file_paths(
+    study_id,
+    metadata_path=None,
+    metadata_files=None,
+    selected_files=None,
+    default_submission_data_path=None,
+    return_skipped=False,
+):
+    default_data_path = (
+        Path(default_submission_data_path).expanduser()
+        if default_submission_data_path
+        else DEFAULT_LOCAL_SUBMISSION_DATA_PATH
+    )
+    base_path = Path(metadata_path).expanduser() if metadata_path else default_data_path / study_id
     base_path = base_path.resolve()
     metadata_files = list(metadata_files or [])
+    selected_file_names = parse_selected_metadata_files(selected_files)
+
+    if metadata_files and selected_file_names:
+        raise SubmissionAPIError("Metadata files and selected files cannot both be provided.")
 
     if base_path.is_file():
-        if metadata_files:
-            raise SubmissionAPIError("Metadata files cannot be provided when metadata path is a file.")
+        if metadata_files or selected_file_names:
+            raise SubmissionAPIError("Metadata files cannot be selected when metadata path is a file.")
         file_paths = [base_path]
+        skipped_files = []
     else:
         if not base_path.exists():
             raise SubmissionAPIError(f"Metadata path does not exist: {base_path}")
         if not base_path.is_dir():
             raise SubmissionAPIError(f"Metadata path is not a file or directory: {base_path}")
 
+        metadata_file_paths = sorted(
+            path.resolve()
+            for path in base_path.iterdir()
+            if path.is_file() and is_metadata_filename(path.name)
+        )
         if metadata_files:
             file_paths = []
             for metadata_file in metadata_files:
@@ -602,8 +653,15 @@ def resolve_metadata_file_paths(study_id, metadata_path=None, metadata_files=Non
                 if not file_path.is_absolute():
                     file_path = base_path / file_path
                 file_paths.append(file_path.resolve())
+            selected_names = {path.name for path in file_paths}
+            skipped_files = [path for path in metadata_file_paths if path.name not in selected_names]
+        elif selected_file_names:
+            file_paths = [(base_path / selected_file).resolve() for selected_file in selected_file_names]
+            selected_names = {Path(selected_file).name for selected_file in selected_file_names}
+            skipped_files = [path for path in metadata_file_paths if path.name not in selected_names]
         else:
-            file_paths = sorted(path.resolve() for path in base_path.iterdir() if path.is_file() and is_metadata_filename(path.name))
+            file_paths = metadata_file_paths
+            skipped_files = []
 
     invalid_paths = [path for path in file_paths if not path.exists() or not path.is_file()]
     if invalid_paths:
@@ -615,6 +673,8 @@ def resolve_metadata_file_paths(study_id, metadata_path=None, metadata_files=Non
         names = ", ".join(invalid_names)
         raise SubmissionAPIError(f"Unsupported metadata file name(s): {names}")
 
+    if return_skipped:
+        return file_paths, skipped_files
     return file_paths
 
 
