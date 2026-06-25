@@ -228,33 +228,40 @@ m_*.tsv
 Upload from the default study data folder:
 
 ```bash
-mtbls submission upload-metadata MTBLS123
+mtbls submission metadata-upload MTBLS123
 ```
 
 Upload from a custom folder:
 
 ```bash
-mtbls submission upload-metadata MTBLS123 --metadata-path ./metadata/MTBLS123
+mtbls submission metadata-upload MTBLS123 --metadata-files-path ./metadata/MTBLS123
 ```
 
 Upload specific files:
 
 ```bash
-mtbls submission upload-metadata MTBLS123 \
-  ./metadata/i_Investigation.txt \
-  ./metadata/s_MTBLS123.txt
+mtbls submission metadata-upload MTBLS123 \
+  --metadata-files-path ./metadata/MTBLS123 \
+  --selected-files i_Investigation.txt,s_MTBLS123.txt
 ```
 
-By default, validation runs after upload. Disable that when needed:
+Use a different default parent folder when metadata is stored outside the local submission data folder:
 
 ```bash
-mtbls submission upload-metadata MTBLS123 --no-validate
+mtbls submission metadata-upload MTBLS123 --default-submission-data-path ./submissions/data
 ```
 
-Save the validation report from upload:
+Override the configured MetaboLights API endpoint for one upload:
 
 ```bash
-mtbls submission upload-metadata MTBLS123 -o upload_validation.json
+mtbls submission metadata-upload MTBLS123 \
+  --mtbls-submission-endpoint https://www.ebi.ac.uk/metabolights/ws
+```
+
+Save upload options and results:
+
+```bash
+mtbls submission metadata-upload MTBLS123 -o metadata_upload_response.json
 ```
 
 ### 5. Run Remote API Validation
@@ -472,7 +479,7 @@ mtbls --help
 | `mtbls submission list` | List studies created by the authenticated user |
 | `mtbls submission create` | Create a provisional study from a JSON input file |
 | `mtbls submission ftp-credentials STUDY_ID` | Get private FTP upload credentials |
-| `mtbls submission upload-metadata STUDY_ID` | Upload ISA-Tab metadata files |
+| `mtbls submission metadata-upload STUDY_ID` | Upload ISA-Tab metadata files |
 | `mtbls submission compress-data-files STUDY_ID` | Compress local `.d` data folders to `.d.zip` files |
 | `mtbls submission validate STUDY_ID` | Run remote study validation through the MetaboLights submission API |
 | `mtbls submission validate-local STUDY_ID` | Run local validation with OPA and the MetaboLights validation bundle |
