@@ -387,7 +387,55 @@ mtbls submission ftp-credentials MTBLS123 -o ftp_credentials.json
 
 Use the returned host, user, password, and folder with your preferred FTP/SFTP client according to the current MetaboLights upload instructions.
 
-### 8. Compress Agilent `.d` Data Folders
+### 8. Upload Data Files
+
+Upload all files under a local data root to the study private FTP area:
+
+```bash
+mtbls submission upload-data MTBLS123 --data-files-root-path ./data
+```
+
+Upload selected files or folders:
+
+```bash
+mtbls submission upload-data MTBLS123 \
+  --data-files-root-path ./data \
+  --selected-files folder1/folder2,folder1
+```
+
+Skip local files or folders from the upload selection:
+
+```bash
+mtbls submission upload-data MTBLS123 \
+  --data-files-root-path ./data \
+  --skip-uploaded-files folder1/old.raw,folder2
+```
+
+Skip selected empty folders:
+
+```bash
+mtbls submission upload-data MTBLS123 \
+  --data-files-root-path ./data \
+  --skip-empty-folders empty-folder
+```
+
+Override the configured MetaboLights API endpoint for one upload:
+
+```bash
+mtbls submission upload-data MTBLS123 \
+  --data-files-root-path ./data \
+  --mtbls-submission-endpoint https://www.ebi.ac.uk/metabolights/ws
+```
+
+Save upload options and results:
+
+```bash
+mtbls submission upload-data MTBLS123 --data-files-root-path ./data -o data_upload_response.json
+```
+
+Before uploading, the command indexes the study FTP folder and skips local files already present remotely with the same relative path and file size.
+
+### 9. Compress Agilent `.d` Data Folders
 
 Compress local `.d` directories in the study `FILES/` folder before uploading data files:
 
@@ -479,6 +527,7 @@ mtbls --help
 | `mtbls submission list` | List studies created by the authenticated user |
 | `mtbls submission create` | Create a provisional study from a JSON input file |
 | `mtbls submission ftp-credentials STUDY_ID` | Get private FTP upload credentials |
+| `mtbls submission upload-data STUDY_ID --data-files-root-path PATH` | Upload data files to the private FTP area |
 | `mtbls submission metadata-upload STUDY_ID` | Upload ISA-Tab metadata files |
 | `mtbls submission compress-data-files STUDY_ID` | Compress local `.d` data folders to `.d.zip` files |
 | `mtbls submission validate STUDY_ID` | Run remote study validation through the MetaboLights submission API |

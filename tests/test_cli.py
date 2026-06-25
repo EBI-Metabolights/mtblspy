@@ -6,6 +6,7 @@ import pytest
 from click.testing import CliRunner
 
 from mtblspy.commands.submissions.client import (
+    DataUploadResult,
     MetadataUploadResult,
     ValidationResult,
     ValidationRootCauseResult,
@@ -387,6 +388,91 @@ def test_submission_upload_metadata_writes_json_output(mock_client_cls, runner, 
     payload = json.loads(output_file.read_text(encoding="utf-8"))
     assert payload["parameters"][3]["value"] == "https://upload.example/metabolights/ws"
     assert payload["uploaded_files"] == ["i_Investigation.txt"]
+    mock_client_cls.assert_called_once_with(base_url="https://upload.example/metabolights/ws")
+
+
+@patch("mtblspy.commands.submissions.submission_upload_data.SubmissionClient")
+def test_submission_upload_data_success(mock_client_cls, runner, tmp_path):
+    client = MagicMock()
+    client.rest_api_base_url = "https://www.ebi.ac.uk/metabolights/ws"
+    client.upload_data_files.return_value = DataUploadResult(
+        study_id="MTBLS123",
+        uploaded_files=["folder1/file1.raw"],
+        skipped_files=["folder1/file2.raw"],
+        missing_on_local=[],
+    )
+    mock_client_cls.return_value = client
+
+    result = runner.invoke(
+        cli,
+        [
+            "submission",
+            "upload-data",
+            "MTBLS123",
+            "--data-files-root-path",
+            str(tmp_path),
+            "--selected-files",
+            "folder1",
+            "--skip-uploaded-files",
+            "folder2",
+            "--skip-empty-folders",
+            "empty-folder",
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["status"] == "success"
+    assert payload["uploaded_files"] == ["folder1/file1.raw"]
+    assert payload["Skipped_files"] == ["folder1/file2.raw"]
+    assert payload["missing_on_local"] == []
+    client.upload_data_files.assert_called_once_with(
+        "MTBLS123",
+        data_files_root_path=str(tmp_path),
+        selected_files=["folder1"],
+        skip_uploaded_files=["folder2"],
+        skip_empty_folders=["empty-folder"],
+    )
+
+
+@patch("mtblspy.commands.submissions.submission_upload_data.SubmissionClient")
+def test_submission_upload_data_writes_json_output(mock_client_cls, runner, tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        "mtblspy.commands.submissions.submission_upload_data.DEFAULT_LOCAL_SUBMISSION_CACHE_PATH",
+        tmp_path / "cache",
+    )
+    client = MagicMock()
+    client.rest_api_base_url = "https://upload.example/metabolights/ws"
+    client.upload_data_files.return_value = DataUploadResult(
+        study_id="MTBLS123",
+        uploaded_files=[],
+        skipped_files=[],
+        missing_on_local=["missing.raw"],
+    )
+    mock_client_cls.return_value = client
+
+    result = runner.invoke(
+        cli,
+        [
+            "submission",
+            "upload-data",
+            "MTBLS123",
+            "--data-files-root-path",
+            str(tmp_path),
+            "--selected-files",
+            "missing.raw",
+            "--mtbls-submission-endpoint",
+            "upload.example/metabolights/ws",
+            "-o",
+            "data-upload.json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    output_file = tmp_path / "cache" / "MTBLS123" / "data-upload.json"
+    payload = json.loads(output_file.read_text(encoding="utf-8"))
+    assert payload["status"] == "failed"
+    assert payload["missing_on_local"] == ["missing.raw"]
     mock_client_cls.assert_called_once_with(base_url="https://upload.example/metabolights/ws")
 
 
