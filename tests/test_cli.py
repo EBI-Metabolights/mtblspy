@@ -260,7 +260,98 @@ def test_submission_templates_help_shows_child_command(runner):
     assert result.exit_code == 0
     assert "Commands:" in result.output
     assert "study-creation-input" in result.output
+    assert "isa-tab-file" in result.output
+    assert "result-file" in result.output
     assert "Create a sample study creation JSON input file." in result.output
+
+
+@patch("mtblspy.commands.submissions.template_files.requests.get")
+def test_submission_templates_isa_tab_file_downloads_template(mock_get, runner, tmp_path):
+    response = MagicMock()
+    response.content = b"template-content"
+    response.headers = {"Content-Disposition": 'attachment; filename="a_assay.txt"'}
+    mock_get.return_value = response
+
+    result = runner.invoke(
+        cli,
+        [
+            "submission",
+            "templates",
+            "isa-tab-file",
+            "assay",
+            "--template-name",
+            "MS",
+            "--version",
+            "1.0",
+            "--target-path",
+            str(tmp_path),
+            "--mtbls-validation-endpoint",
+            "https://wwwdev.ebi.ac.uk/metabolights/ws3",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert (tmp_path / "a_assay.txt").read_bytes() == b"template-content"
+    mock_get.assert_called_once_with(
+        "https://wwwdev.ebi.ac.uk/metabolights/ws3/public/v2/submission/file-template",
+        params={"file_type": "assay", "template_name": "MS", "version": "1.0"},
+        timeout=60,
+    )
+
+
+@patch("mtblspy.commands.submissions.template_files.requests.get")
+def test_submission_templates_isa_tab_file_fails_when_target_exists_without_override(mock_get, runner, tmp_path):
+    target_file = tmp_path / "i_investigation.txt"
+    target_file.write_text("existing", encoding="utf-8")
+    response = MagicMock()
+    response.content = b"new-content"
+    response.headers = {"Content-Disposition": 'attachment; filename="i_investigation.txt"'}
+    mock_get.return_value = response
+
+    result = runner.invoke(
+        cli,
+        [
+            "submission",
+            "templates",
+            "isa-tab-file",
+            "investigation",
+            "--target-path",
+            str(tmp_path),
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "Template file already exists" in result.output
+    assert target_file.read_text(encoding="utf-8") == "existing"
+
+
+@patch("mtblspy.commands.submissions.template_files.requests.get")
+def test_submission_templates_result_file_uses_default_maf_type(mock_get, runner, tmp_path):
+    response = MagicMock()
+    response.content = b"maf-template"
+    response.headers = {}
+    mock_get.return_value = response
+
+    result = runner.invoke(
+        cli,
+        [
+            "submission",
+            "templates",
+            "result-file",
+            "--template-name",
+            "MS",
+            "--target-path",
+            str(tmp_path),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert (tmp_path / "maf_MS.tsv").read_bytes() == b"maf-template"
+    mock_get.assert_called_once_with(
+        "https://www.ebi.ac.uk/metabolights/ws3/public/v2/submission/file-template",
+        params={"file_type": "maf", "template_name": "MS"},
+        timeout=60,
+    )
 
 
 @patch("mtblspy.commands.submissions.submission_ftp_credentials.SubmissionClient")

@@ -170,6 +170,31 @@ Use a custom folder but keep the default filename `study_input.json`:
 mtbls submission templates study-creation-input --data-folder ./submissions
 ```
 
+Download an ISA-Tab metadata file template:
+
+```bash
+mtbls submission templates isa-tab-file assay \
+  --template-name MS \
+  --version 1.0 \
+  --target-path ./metadata \
+  --mtbls-validation-endpoint https://www.ebi.ac.uk/metabolights/ws3
+```
+
+Allowed ISA-Tab file types are `assay`, `sample`, and `investigation`.
+
+Download a result file template:
+
+```bash
+mtbls submission templates result-file \
+  --file-type maf \
+  --template-name MS \
+  --version 1.0 \
+  --target-path ./metadata \
+  --mtbls-validation-endpoint https://www.ebi.ac.uk/metabolights/ws3
+```
+
+The default result `--file-type` is `maf`, which maps to assignment output. Template downloads use `/public/v2/submission/file-template` on the configured validation endpoint. Existing target files are not overwritten unless `--override-current` is set.
+
 Edit the JSON file before creating the study. At minimum, review the title, description, study categories, contacts, publications, funding, descriptors, and agreement fields.
 
 ### 2. Create A Provisional Study
@@ -547,6 +572,8 @@ mtbls --help
 | `mtbls submission compress-data-files STUDY_ID` | Compress local `.d` data folders to `.d.zip` files |
 | `mtbls submission validate STUDY_ID --data-files-root-path PATH` | Run local validation with OPA by default, or remote validation with `--remote-validation` |
 | `mtbls submission templates study-creation-input` | Generate a study creation JSON template |
+| `mtbls submission templates isa-tab-file FILE_TYPE` | Download an ISA-Tab metadata file template |
+| `mtbls submission templates result-file` | Download a result file template |
 
 ### Command Options
 
@@ -584,6 +611,8 @@ Use `-h` or `--help` with any command to see the same options in the terminal.
 | `mtbls submission validate` | `STUDY_ID` | `--default-submission-data-path`, `-p`, `--metadata-files-path`, `--metadata-path`, `--data-files-root-path`, `--remote-validation`, `--mtbls-validation-wasm-path`, `--mtbls-validation-wasm-url`, `--mtbls-validation-endpoint`, `--mtbls-submission-endpoint`, `--validation-bundle-path`, `--mtbls-validation-bundle-path`, `--validation-bundle-url`, `--mtbls-validation-bundle-url`, `--refetch-validation-bundle`, `--opa-executable-path`, `--validation-input-path`, `--config-file`, `--overridden-rules-file-path`, `--max-polls`, `--poll-interval`, `--timeout`, `-o`, `-v`, `--output`, `--validation-file-path`, `--validation_file_path`, `--output-format` |
 | `mtbls submission compress-data-files` | `STUDY_ID` | `-p`, `--study-path`, `--files-path`, `--metadata-path`, `--overwrite`, `--no-overwrite`, `--update-metadata`, `--no-update-metadata`, `--remove-original` |
 | `mtbls submission templates study-creation-input` | None | `-o`, `--output`, `--data-folder`, `--overwrite`, `--no-overwrite` |
+| `mtbls submission templates isa-tab-file` | `FILE_TYPE` | `--template-name`, `--version`, `--target-path`, `--override-current`, `--mtbls-validation-endpoint` |
+| `mtbls submission templates result-file` | None | `--file-type`, `--template-name`, `--version`, `--target-path`, `--override-current`, `--mtbls-validation-endpoint` |
 
 ## Study Creation Input
 

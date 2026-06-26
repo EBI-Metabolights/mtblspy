@@ -1,6 +1,7 @@
 import click
 
 from mtblspy.commands.submissions.study_creation_input import study_creation_input
+from mtblspy.commands.submissions.template_files import isa_tab_file_template, result_file_template
 
 
 @click.group(
@@ -13,6 +14,8 @@ def submission_templates():
 
 
 submission_templates.add_command(study_creation_input)
+submission_templates.add_command(isa_tab_file_template)
+submission_templates.add_command(result_file_template)
 
 
 if __name__ == "__main__":
