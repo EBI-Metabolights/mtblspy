@@ -1,11 +1,13 @@
 import json
 import zipfile
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 from click.testing import CliRunner
 
 from mtblspy.commands.submissions.client import (
+    DataUploadResult,
     MetadataUploadResult,
     ValidationResult,
     ValidationRootCauseResult,
@@ -258,7 +260,145 @@ def test_submission_templates_help_shows_child_command(runner):
     assert result.exit_code == 0
     assert "Commands:" in result.output
     assert "study-creation-input" in result.output
+    assert "isa-tab-file" in result.output
+    assert "result-file" in result.output
     assert "Create a sample study creation JSON input file." in result.output
+
+
+@patch("mtblspy.commands.submissions.template_files.requests.get")
+def test_submission_templates_isa_tab_file_downloads_template(mock_get, runner, tmp_path):
+    response = MagicMock()
+    response.status_code = 200
+    response.content = b"template-content"
+    response.headers = {"Content-Disposition": 'attachment; filename="a_assay.txt"'}
+    mock_get.return_value = response
+
+    result = runner.invoke(
+        cli,
+        [
+            "submission",
+            "templates",
+            "isa-tab-file",
+            "assay",
+            "--template-name",
+            "LC-MS",
+            "--version",
+            "1.0",
+            "--target-path",
+            str(tmp_path),
+            "--mtbls-validation-endpoint",
+            "https://wwwdev.ebi.ac.uk/metabolights/ws3",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert (tmp_path / "a_assay.txt").read_bytes() == b"template-content"
+    mock_get.assert_called_once_with(
+        "https://wwwdev.ebi.ac.uk/metabolights/ws3/public/v2/submission/file-template",
+        params={"file_type": "assay", "template_name": "LC-MS", "version": "1.0"},
+        timeout=60,
+    )
+
+
+@patch("mtblspy.commands.submissions.template_files.requests.get")
+def test_submission_templates_isa_tab_file_fails_when_target_exists_without_override(mock_get, runner, tmp_path):
+    target_file = tmp_path / "i_investigation.txt"
+    target_file.write_text("existing", encoding="utf-8")
+    response = MagicMock()
+    response.status_code = 200
+    response.content = b"new-content"
+    response.headers = {"Content-Disposition": 'attachment; filename="i_investigation.txt"'}
+    mock_get.return_value = response
+
+    result = runner.invoke(
+        cli,
+        [
+            "submission",
+            "templates",
+            "isa-tab-file",
+            "investigation",
+            "--target-path",
+            str(tmp_path),
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "Template file already exists" in result.output
+    assert target_file.read_text(encoding="utf-8") == "existing"
+
+
+@patch("mtblspy.commands.submissions.template_files.requests.get")
+def test_submission_templates_isa_tab_file_retries_without_version_after_server_error(mock_get, runner, tmp_path):
+    failed_response = MagicMock()
+    failed_response.status_code = 500
+    failed_response.content = b'{"error_message":"UnboundLocalError"}'
+    failed_response.headers = {}
+
+    successful_response = MagicMock()
+    successful_response.status_code = 200
+    successful_response.content = b"template-content"
+    successful_response.headers = {"Content-Disposition": 'attachment; filename="a_assay.txt"'}
+    mock_get.side_effect = [failed_response, successful_response]
+
+    result = runner.invoke(
+        cli,
+        [
+            "submission",
+            "templates",
+            "isa-tab-file",
+            "assay",
+            "--template-name",
+            "LC-MS",
+            "--version",
+            "1.0",
+            "--target-path",
+            str(tmp_path),
+            "--mtbls-validation-endpoint",
+            "https://wwwdev.ebi.ac.uk/metabolights/ws3",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert (tmp_path / "a_assay.txt").read_bytes() == b"template-content"
+    assert mock_get.call_args_list[0].kwargs["params"] == {
+        "file_type": "assay",
+        "template_name": "LC-MS",
+        "version": "1.0",
+    }
+    assert mock_get.call_args_list[1].kwargs["params"] == {
+        "file_type": "assay",
+        "template_name": "LC-MS",
+    }
+
+
+@patch("mtblspy.commands.submissions.template_files.requests.get")
+def test_submission_templates_result_file_uses_default_maf_type(mock_get, runner, tmp_path):
+    response = MagicMock()
+    response.status_code = 200
+    response.content = b"maf-template"
+    response.headers = {}
+    mock_get.return_value = response
+
+    result = runner.invoke(
+        cli,
+        [
+            "submission",
+            "templates",
+            "result-file",
+            "--template-name",
+            "MS",
+            "--target-path",
+            str(tmp_path),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert (tmp_path / "assignment_MS.tsv").read_bytes() == b"maf-template"
+    mock_get.assert_called_once_with(
+        "https://www.ebi.ac.uk/metabolights/ws3/public/v2/submission/file-template",
+        params={"file_type": "assignment", "template_name": "MS"},
+        timeout=60,
+    )
 
 
 @patch("mtblspy.commands.submissions.submission_ftp_credentials.SubmissionClient")
@@ -390,10 +530,95 @@ def test_submission_upload_metadata_writes_json_output(mock_client_cls, runner, 
     mock_client_cls.assert_called_once_with(base_url="https://upload.example/metabolights/ws")
 
 
+@patch("mtblspy.commands.submissions.submission_upload_data.SubmissionClient")
+def test_submission_upload_data_success(mock_client_cls, runner, tmp_path):
+    client = MagicMock()
+    client.rest_api_base_url = "https://www.ebi.ac.uk/metabolights/ws"
+    client.upload_data_files.return_value = DataUploadResult(
+        study_id="MTBLS123",
+        uploaded_files=["folder1/file1.raw"],
+        skipped_files=["folder1/file2.raw"],
+        missing_on_local=[],
+    )
+    mock_client_cls.return_value = client
+
+    result = runner.invoke(
+        cli,
+        [
+            "submission",
+            "upload-data",
+            "MTBLS123",
+            "--data-files-root-path",
+            str(tmp_path),
+            "--selected-files",
+            "folder1",
+            "--skip-uploaded-files",
+            "folder2",
+            "--skip-empty-folders",
+            "empty-folder",
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["status"] == "success"
+    assert payload["uploaded_files"] == ["folder1/file1.raw"]
+    assert payload["Skipped_files"] == ["folder1/file2.raw"]
+    assert payload["missing_on_local"] == []
+    client.upload_data_files.assert_called_once_with(
+        "MTBLS123",
+        data_files_root_path=str(tmp_path),
+        selected_files=["folder1"],
+        skip_uploaded_files=["folder2"],
+        skip_empty_folders=["empty-folder"],
+    )
+
+
+@patch("mtblspy.commands.submissions.submission_upload_data.SubmissionClient")
+def test_submission_upload_data_writes_json_output(mock_client_cls, runner, tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        "mtblspy.commands.submissions.submission_upload_data.DEFAULT_LOCAL_SUBMISSION_CACHE_PATH",
+        tmp_path / "cache",
+    )
+    client = MagicMock()
+    client.rest_api_base_url = "https://upload.example/metabolights/ws"
+    client.upload_data_files.return_value = DataUploadResult(
+        study_id="MTBLS123",
+        uploaded_files=[],
+        skipped_files=[],
+        missing_on_local=["missing.raw"],
+    )
+    mock_client_cls.return_value = client
+
+    result = runner.invoke(
+        cli,
+        [
+            "submission",
+            "upload-data",
+            "MTBLS123",
+            "--data-files-root-path",
+            str(tmp_path),
+            "--selected-files",
+            "missing.raw",
+            "--mtbls-submission-endpoint",
+            "upload.example/metabolights/ws",
+            "-o",
+            "data-upload.json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    output_file = tmp_path / "cache" / "MTBLS123" / "data-upload.json"
+    payload = json.loads(output_file.read_text(encoding="utf-8"))
+    assert payload["status"] == "failed"
+    assert payload["missing_on_local"] == ["missing.raw"]
+    mock_client_cls.assert_called_once_with(base_url="https://upload.example/metabolights/ws")
+
+
 @patch("mtblspy.commands.submissions.submission_validate.SubmissionClient")
-def test_submission_validate_prints_report(mock_client_cls, runner, tmp_path):
+def test_submission_validate_remote_prints_json_report(mock_client_cls, runner, tmp_path):
     report_path = tmp_path / "validation-report.json"
-    report_path.write_text('{"messages": {"violations": []}}\n', encoding="utf-8")
+    report_path.write_text('{"accession": "MTBLS123", "messages": {"violations": []}}\n', encoding="utf-8")
 
     validation_result = MagicMock()
     validation_result.errors = []
@@ -405,13 +630,22 @@ def test_submission_validate_prints_report(mock_client_cls, runner, tmp_path):
 
     result = runner.invoke(
         cli,
-        ["submission", "validate", "MTBLS123", "--validation-file-path", str(report_path)],
+        [
+            "submission",
+            "validate",
+            "MTBLS123",
+            "--data-files-root-path",
+            str(tmp_path),
+            "--remote-validation",
+            "--validation-file-path",
+            str(report_path),
+        ],
     )
 
     assert result.exit_code == 0
-    assert "Validation completed successfully. No validation errors found." in result.output
-    assert '{"messages": {"violations": []}}' in result.output
-    assert f"Validation report is saved as {report_path}" in result.output
+    payload = json.loads(result.output)
+    assert payload["accession"] == "MTBLS123"
+    assert payload["messages"] == {"violations": []}
     client.validate_study.assert_called_once_with(
         "MTBLS123",
         validation_file_path=str(report_path),
@@ -420,13 +654,13 @@ def test_submission_validate_prints_report(mock_client_cls, runner, tmp_path):
     )
 
 
-def test_submission_help_shows_remote_and_local_validation(runner):
+def test_submission_help_shows_validate_without_validate_local(runner):
     result = runner.invoke(cli, ["submission", "--help"])
 
     assert result.exit_code == 0
     assert "compress-data-files" in result.output
     assert "validate" in result.output
-    assert "validate-local" in result.output
+    assert "validate-local" not in result.output
 
 
 def test_submission_compress_data_files_zips_dot_d_and_updates_metadata(runner, tmp_path):
@@ -507,10 +741,11 @@ def test_submission_compress_data_files_can_remove_original_directories(runner, 
     assert "Removed 1 original .d directory." in result.output
 
 
-@patch("mtblspy.commands.submissions.submission_validate_local.run_local_validation")
-def test_submission_validate_local_command(mock_run_local_validation, runner, tmp_path):
+@patch("mtblspy.commands.submissions.submission_validate.run_local_validation")
+def test_submission_validate_runs_local_validation_by_default(mock_run_local_validation, runner, tmp_path):
     report_path = tmp_path / "local-validation-report.json"
     input_path = tmp_path / "local-validation-input.json"
+    report_path.write_text('{"accession": "MTBLS123", "status": "success", "errors": []}\n', encoding="utf-8")
     mock_run_local_validation.return_value = LocalValidationResult(
         report={"status": "success", "errors": []},
         errors=[],
@@ -522,10 +757,12 @@ def test_submission_validate_local_command(mock_run_local_validation, runner, tm
         cli,
         [
             "submission",
-            "validate-local",
+            "validate",
             "MTBLS123",
-            "--metadata-path",
+            "--metadata-files-path",
             str(tmp_path),
+            "--data-files-root-path",
+            str(tmp_path / "FILES"),
             "-o",
             "local-report.json",
             "--validation-input-path",
@@ -534,16 +771,19 @@ def test_submission_validate_local_command(mock_run_local_validation, runner, tm
     )
 
     assert result.exit_code == 0
-    assert "Local validation completed successfully" in result.output
-    assert f"Local validation report is saved as {report_path}" in result.output
+    payload = json.loads(result.output)
+    assert payload["status"] == "success"
     mock_run_local_validation.assert_called_once_with(
         "MTBLS123",
         metadata_path=str(tmp_path),
-        data_files_path=None,
+        data_files_path=str(tmp_path / "FILES"),
+        default_submission_data_path=str(Path.home() / "metabolights_data" / "submission" / "data"),
         validation_bundle_path="./bundle.tar.gz",
         validation_bundle_url="https://ebi-metabolights.github.io/mtbls-validation/bundle.tar.gz",
         refetch_validation_bundle=False,
         opa_executable_path="opa",
+        validation_wasm_path=None,
+        validation_wasm_url=None,
         validation_file_path="local-report.json",
         validation_input_path=str(input_path),
         config_file=None,

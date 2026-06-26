@@ -1,5 +1,7 @@
 import base64
+from ftplib import FTP, error_perm
 import json
+import posixpath
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -56,6 +58,23 @@ class MetadataUploadResult:
     responses: list[Any]
     skipped_files: list[Path] = field(default_factory=list)
     validation_result: ValidationResult | None = None
+
+
+@dataclass
+class DataUploadResult:
+    study_id: str
+    uploaded_files: list[str]
+    skipped_files: list[str]
+    missing_on_local: list[str]
+    errors: list[str] = field(default_factory=list)
+
+
+@dataclass
+class DataUploadPlan:
+    files: list[Path]
+    empty_folders: list[str]
+    skipped_files: list[str]
+    missing_on_local: list[str]
 
 
 class SubmissionClient:
@@ -420,6 +439,89 @@ class SubmissionClient:
             validation_result=validation_result,
         )
 
+    def upload_data_files(
+        self,
+        study_id,
+        data_files_root_path,
+        selected_files=None,
+        skip_uploaded_files=None,
+        skip_empty_folders=None,
+        ftp_factory=None,
+    ):
+        study_id = normalize_study_id(study_id)
+        plan = resolve_data_upload_plan(
+            data_files_root_path,
+            selected_files=selected_files,
+            skip_uploaded_files=skip_uploaded_files,
+            skip_empty_folders=skip_empty_folders,
+        )
+        if plan.missing_on_local:
+            return DataUploadResult(
+                study_id=study_id,
+                uploaded_files=[],
+                skipped_files=plan.skipped_files,
+                missing_on_local=plan.missing_on_local,
+            )
+
+        if not plan.files and not plan.empty_folders:
+            return DataUploadResult(
+                study_id=study_id,
+                uploaded_files=[],
+                skipped_files=plan.skipped_files,
+                missing_on_local=[],
+            )
+
+        ftp_details = self.get_private_ftp_credentials(study_id)
+        ftp = connect_ftp(ftp_details, ftp_factory=ftp_factory)
+        root_path = Path(data_files_root_path).expanduser().resolve()
+        uploaded_files = []
+        skipped_files = list(plan.skipped_files)
+        errors = []
+
+        try:
+            upload_root = enter_ftp_upload_root(ftp, ftp_details.ftp_folder)
+            remote_files, remote_folders = index_ftp_data_files(ftp, upload_root)
+
+            for empty_folder in plan.empty_folders:
+                if empty_folder in remote_folders:
+                    skipped_files.append(f"{empty_folder}/")
+                    continue
+                try:
+                    ensure_ftp_directory(ftp, empty_folder, root_directory=upload_root)
+                    uploaded_files.append(f"{empty_folder}/")
+                except Exception:
+                    skipped_files.append(f"{empty_folder}/")
+
+            for file_path in plan.files:
+                relative_path = to_posix_relative_path(file_path, root_path)
+                local_size = file_path.stat().st_size
+                remote_size = remote_files.get(relative_path)
+                if remote_size is None and relative_path in remote_files:
+                    skipped_files.append(relative_path)
+                    continue
+                if remote_size == local_size:
+                    skipped_files.append(relative_path)
+                    continue
+
+                try:
+                    upload_ftp_file(ftp, upload_root, file_path, relative_path)
+                    uploaded_files.append(relative_path)
+                except Exception as exc:
+                    errors.append(f"{relative_path}: {exc}")
+        finally:
+            try:
+                ftp.quit()
+            except Exception:
+                pass
+
+        return DataUploadResult(
+            study_id=study_id,
+            uploaded_files=uploaded_files,
+            skipped_files=skipped_files,
+            missing_on_local=[],
+            errors=errors,
+        )
+
     def validate_study(
         self,
         study_id,
@@ -592,21 +694,25 @@ def is_metadata_filename(filename):
 
 
 def parse_selected_metadata_files(selected_files):
-    if not selected_files:
-        return []
-    if isinstance(selected_files, str):
-        raw_files = selected_files.split(",")
-    else:
-        raw_files = selected_files
+    return parse_comma_separated_values(selected_files)
 
-    parsed_files = []
+
+def parse_comma_separated_values(values):
+    if not values:
+        return []
+    if isinstance(values, str):
+        raw_values = values.split(",")
+    else:
+        raw_values = values
+
+    parsed_values = []
     seen = set()
-    for raw_file in raw_files:
-        file_name = str(raw_file).strip()
-        if file_name and file_name not in seen:
-            parsed_files.append(file_name)
-            seen.add(file_name)
-    return parsed_files
+    for raw_value in raw_values:
+        value = str(raw_value).strip()
+        if value and value not in seen:
+            parsed_values.append(value)
+            seen.add(value)
+    return parsed_values
 
 
 def resolve_metadata_file_paths(
@@ -676,6 +782,309 @@ def resolve_metadata_file_paths(
     if return_skipped:
         return file_paths, skipped_files
     return file_paths
+
+
+def resolve_data_upload_plan(
+    data_files_root_path,
+    selected_files=None,
+    skip_uploaded_files=None,
+    skip_empty_folders=None,
+):
+    root_path = Path(data_files_root_path).expanduser().resolve()
+    if not root_path.exists():
+        raise SubmissionAPIError(f"Data files root path does not exist: {root_path}")
+    if not root_path.is_dir():
+        raise SubmissionAPIError(f"Data files root path is not a directory: {root_path}")
+
+    selected_entries = parse_comma_separated_values(selected_files)
+    skip_entries = parse_comma_separated_values(skip_uploaded_files)
+    skip_empty_entries = parse_comma_separated_values(skip_empty_folders)
+
+    selected_paths = selected_entries or ["."]
+    files_by_relative_path = {}
+    empty_folders_by_relative_path = {}
+    missing_on_local = []
+
+    for selected_path in selected_paths:
+        collect_data_upload_paths(
+            root_path,
+            selected_path,
+            files_by_relative_path,
+            empty_folders_by_relative_path,
+            missing_on_local,
+        )
+
+    skipped_files = []
+    for skip_path in skip_entries:
+        skip_candidate = resolve_data_candidate_path(root_path, skip_path)
+        if not skip_candidate.exists():
+            missing_on_local.append(skip_path)
+            continue
+        for relative_path in iter_data_relative_paths(root_path, skip_candidate):
+            if relative_path in files_by_relative_path:
+                files_by_relative_path.pop(relative_path)
+                skipped_files.append(relative_path)
+            if relative_path in empty_folders_by_relative_path:
+                empty_folders_by_relative_path.pop(relative_path)
+                skipped_files.append(f"{relative_path}/")
+
+    for skip_empty_folder in skip_empty_entries:
+        folder_candidate = resolve_data_candidate_path(root_path, skip_empty_folder)
+        if not folder_candidate.exists():
+            missing_on_local.append(skip_empty_folder)
+            continue
+        if not folder_candidate.is_dir():
+            missing_on_local.append(skip_empty_folder)
+            continue
+        relative_path = to_posix_relative_path(folder_candidate, root_path)
+        if relative_path in empty_folders_by_relative_path:
+            empty_folders_by_relative_path.pop(relative_path)
+            skipped_files.append(f"{relative_path}/")
+
+    return DataUploadPlan(
+        files=list(files_by_relative_path.values()),
+        empty_folders=list(empty_folders_by_relative_path),
+        skipped_files=sorted(set(skipped_files)),
+        missing_on_local=parse_comma_separated_values(missing_on_local),
+    )
+
+
+def collect_data_upload_paths(
+    root_path,
+    selected_path,
+    files_by_relative_path,
+    empty_folders_by_relative_path,
+    missing_on_local,
+):
+    candidate = resolve_data_candidate_path(root_path, selected_path)
+    if not candidate.exists():
+        missing_on_local.append(selected_path)
+        return
+
+    if candidate.is_file():
+        files_by_relative_path[to_posix_relative_path(candidate, root_path)] = candidate
+        return
+
+    if not candidate.is_dir():
+        missing_on_local.append(selected_path)
+        return
+
+    found_file = False
+    for file_path in sorted(path for path in candidate.rglob("*") if path.is_file()):
+        found_file = True
+        files_by_relative_path[to_posix_relative_path(file_path, root_path)] = file_path
+
+    for folder_path in sorted(path for path in candidate.rglob("*") if path.is_dir()):
+        if is_empty_directory(folder_path):
+            empty_folders_by_relative_path[to_posix_relative_path(folder_path, root_path)] = folder_path
+
+    if not found_file and is_empty_directory(candidate):
+        empty_folders_by_relative_path[to_posix_relative_path(candidate, root_path)] = candidate
+
+
+def resolve_data_candidate_path(root_path, requested_path):
+    candidate = Path(requested_path).expanduser()
+    if not candidate.is_absolute():
+        candidate = root_path / candidate
+    return candidate.resolve()
+
+
+def iter_data_relative_paths(root_path, candidate):
+    if candidate.is_file():
+        return [to_posix_relative_path(candidate, root_path)]
+    if candidate.is_dir():
+        relative_paths = [
+            to_posix_relative_path(path, root_path)
+            for path in sorted(candidate.rglob("*"))
+            if path.is_file() or is_empty_directory(path)
+        ]
+        if is_empty_directory(candidate):
+            relative_paths.append(to_posix_relative_path(candidate, root_path))
+        return relative_paths
+    return []
+
+
+def is_empty_directory(path):
+    return path.is_dir() and not any(path.iterdir())
+
+
+def to_posix_relative_path(path, root_path):
+    relative_path = Path(path).resolve().relative_to(Path(root_path).resolve())
+    if str(relative_path) == ".":
+        return "."
+    return relative_path.as_posix()
+
+
+def connect_ftp(ftp_details, ftp_factory=None):
+    ftp_factory = ftp_factory or FTP
+    ftp_host = normalize_ftp_host(ftp_details.ftp_host)
+    ftp = ftp_factory(ftp_host, timeout=60)
+    ftp.login(ftp_details.ftp_user, ftp_details.ftp_password)
+    return ftp
+
+
+def normalize_ftp_host(ftp_host):
+    if "://" not in ftp_host:
+        return ftp_host
+    return urlsplit(ftp_host).netloc or urlsplit(ftp_host).path
+
+
+def index_ftp_data_files(ftp, remote_root):
+    files = {}
+    folders = set()
+    remote_root = remote_root or "."
+    try:
+        index_ftp_directory(ftp, remote_root, "", files, folders)
+    except Exception:
+        return files, folders
+    return files, folders
+
+
+def index_ftp_directory(ftp, remote_directory, relative_directory, files, folders):
+    for name, facts in ftp.mlsd(remote_directory):
+        if name in (".", ".."):
+            continue
+        entry_type = facts.get("type", "")
+        relative_path = join_relative_path(relative_directory, name)
+        remote_path = join_remote_path(remote_directory, name)
+        if entry_type == "dir":
+            folders.add(relative_path)
+            index_ftp_directory(ftp, remote_path, relative_path, files, folders)
+        elif entry_type == "file":
+            files[relative_path] = parse_ftp_size(facts.get("size"))
+
+
+def parse_ftp_size(size):
+    try:
+        return int(size)
+    except (TypeError, ValueError):
+        return None
+
+
+def join_relative_path(parent, child):
+    if not parent:
+        return child
+    return f"{parent.rstrip('/')}/{child.lstrip('/')}"
+
+
+def join_remote_path(parent, child):
+    if not parent:
+        return child
+    return posixpath.join(parent, child)
+
+
+def enter_ftp_upload_root(ftp, ftp_folder):
+    ftp_folder = (ftp_folder or "").strip()
+    if not ftp_folder:
+        return get_ftp_current_directory(ftp)
+
+    candidates = [ftp_folder]
+    stripped_folder = ftp_folder.strip("/")
+    if stripped_folder and stripped_folder != ftp_folder:
+        candidates.append(stripped_folder)
+    basename = posixpath.basename(stripped_folder)
+    if basename and basename not in candidates:
+        candidates.append(basename)
+
+    for candidate in candidates:
+        try:
+            ftp.cwd(candidate)
+            return get_ftp_current_directory(ftp)
+        except error_perm:
+            continue
+
+    return get_ftp_current_directory(ftp)
+
+
+def get_ftp_current_directory(ftp):
+    try:
+        return ftp.pwd()
+    except Exception:
+        return "."
+
+
+def ensure_ftp_directory(ftp, remote_directory, root_directory=None):
+    if root_directory:
+        try:
+            ftp.cwd(root_directory)
+        except error_perm:
+            pass
+    if not remote_directory:
+        return
+    parts = [part for part in remote_directory.split("/") if part]
+    if remote_directory.startswith("/"):
+        try:
+            ftp.cwd("/")
+        except error_perm:
+            pass
+
+    for part in parts:
+        try:
+            ftp.cwd(part)
+        except error_perm:
+            try:
+                ftp.mkd(part)
+            except error_perm:
+                ftp.cwd(part)
+            else:
+                ftp.cwd(part)
+
+
+def upload_ftp_file(ftp, root_directory, file_path, relative_path):
+    remote_directory = posixpath.dirname(relative_path)
+    remote_filename = posixpath.basename(relative_path)
+    temporary_filename = get_temporary_ftp_filename(remote_filename)
+    try:
+        create_ftp_directory_path(ftp, root_directory, remote_directory)
+        ensure_ftp_directory(ftp, remote_directory, root_directory=root_directory)
+        with file_path.open("rb") as file_handle:
+            ftp.storbinary(f"STOR {temporary_filename}", file_handle)
+        ftp.rename(temporary_filename, remote_filename)
+    except error_perm:
+        upload_ftp_file_by_relative_path(ftp, root_directory, file_path, relative_path)
+
+
+def upload_ftp_file_by_relative_path(ftp, root_directory, file_path, relative_path):
+    temporary_relative_path = get_temporary_ftp_relative_path(relative_path)
+    if root_directory:
+        try:
+            ftp.cwd(root_directory)
+        except error_perm:
+            pass
+    with file_path.open("rb") as file_handle:
+        ftp.storbinary(f"STOR {temporary_relative_path}", file_handle)
+    ftp.rename(temporary_relative_path, relative_path)
+
+
+def get_temporary_ftp_relative_path(relative_path):
+    remote_directory = posixpath.dirname(relative_path)
+    remote_filename = posixpath.basename(relative_path)
+    temporary_filename = get_temporary_ftp_filename(remote_filename)
+    if not remote_directory:
+        return temporary_filename
+    return posixpath.join(remote_directory, temporary_filename)
+
+
+def get_temporary_ftp_filename(filename):
+    return f".ftp_{filename}"
+
+
+def create_ftp_directory_path(ftp, root_directory, remote_directory):
+    if not remote_directory:
+        return
+    if root_directory:
+        try:
+            ftp.cwd(root_directory)
+        except error_perm:
+            pass
+
+    current_path = ""
+    for part in [part for part in remote_directory.split("/") if part]:
+        current_path = join_relative_path(current_path, part)
+        try:
+            ftp.mkd(current_path)
+        except error_perm:
+            pass
 
 
 def get_response_payload(response):

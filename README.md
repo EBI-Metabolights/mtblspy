@@ -170,6 +170,29 @@ Use a custom folder but keep the default filename `study_input.json`:
 mtbls submission templates study-creation-input --data-folder ./submissions
 ```
 
+Download an ISA-Tab metadata file template:
+
+```bash
+mtbls submission templates isa-tab-file assay \
+  --template-name LC-MS \
+  --target-path ./metadata \
+  --mtbls-validation-endpoint https://www.ebi.ac.uk/metabolights/ws3
+```
+
+Allowed ISA-Tab file types are `assay`, `sample`, and `investigation`. For assay templates, use configured template names such as `LC-MS`, `GC-MS`, or `NMR`. `--version` is optional; if a versioned request fails with a server error, mtblspy retries once without the version.
+
+Download a result file template:
+
+```bash
+mtbls submission templates result-file \
+  --file-type maf \
+  --template-name MS \
+  --target-path ./metadata \
+  --mtbls-validation-endpoint https://www.ebi.ac.uk/metabolights/ws3
+```
+
+The default result `--file-type` is `maf`; mtblspy sends this to the API as `assignment`. Template downloads use `/public/v2/submission/file-template` on the configured validation endpoint. Existing target files are not overwritten unless `--override-current` is set.
+
 Edit the JSON file before creating the study. At minimum, review the title, description, study categories, contacts, publications, funding, descriptors, and agreement fields.
 
 ### 2. Create A Provisional Study
@@ -264,34 +287,39 @@ Save upload options and results:
 mtbls submission metadata-upload MTBLS123 -o metadata_upload_response.json
 ```
 
-### 5. Run Remote API Validation
+### 5. Run Validation
 
-The `validate` command runs validation through the MetaboLights submission API.
+The `validate` command runs local validation by default. It builds the local validation input from the metadata folder using mtblspy's built-in ISA-Tab reader, then runs the MetaboLights validation policy using OPA and the validation bundle.
 
-```bash
-mtbls submission validate MTBLS123
-```
-
-Save the validation report:
+You need the `opa` executable available on `PATH`, or pass its location with `--opa-executable-path`. mtblspy downloads the validation bundle automatically when the configured bundle path is missing.
 
 ```bash
-mtbls submission validate MTBLS123 -o validation_report.json
+mtbls submission validate MTBLS123 --data-files-root-path ./data
 ```
 
-Control polling:
+Default metadata folder:
+
+```text
+~/metabolights_data/submission/data/<study_id>
+```
+
+Run validation from a custom metadata folder:
 
 ```bash
 mtbls submission validate MTBLS123 \
-  --max-polls 180 \
-  --poll-interval 10 \
-  -o validation_report.json
+  --metadata-files-path ./metadata/MTBLS123 \
+  --data-files-root-path ./data
 ```
 
-### 6. Run Local Bundle Validation
+Save the validation report and generated validation input:
 
-The `validate-local` command validates local ISA-Tab metadata without starting a remote validation task. It builds the local validation input from the metadata folder using mtblspy's built-in ISA-Tab reader, then runs the MetaboLights validation policy using OPA and the validation bundle.
-
-You need the `opa` executable available on `PATH`, or pass its location with `--opa-executable-path`. mtblspy downloads the validation bundle automatically when the configured bundle path is missing.
+```bash
+mtbls submission validate MTBLS123 \
+  --metadata-files-path ./metadata/MTBLS123 \
+  --data-files-root-path ./data \
+  --validation-input-path ./reports/MTBLS123_validation_input.json \
+  -o ./reports/MTBLS123_validation_report.json
+```
 
 The built-in local reader uses these files when present:
 
@@ -310,31 +338,24 @@ It writes two useful JSON files:
 | Validation input JSON | Local study model sent to OPA |
 | Validation report JSON | Status, full validation result, non-overridden errors, and overrides |
 
-Run local validation from the default metadata folder:
+### Local OPA bundle validation
+
+Local validation uses the OPA bundle workflow by default. It requires the `opa` executable to be available on `PATH`, or passed with `--opa-executable-path`.
+
+Check OPA:
 
 ```bash
-mtbls submission validate-local MTBLS123
+opa version
 ```
 
-Default metadata folder:
-
-```text
-~/metabolights_data/submission/data/<study_id>
-```
-
-Run local validation from a custom metadata folder:
+Run local validation with the default OPA bundle:
 
 ```bash
-mtbls submission validate-local MTBLS123 --metadata-path ./metadata/MTBLS123
-```
-
-Save the local validation report and generated validation input:
-
-```bash
-mtbls submission validate-local MTBLS123 \
-  --metadata-path ./metadata/MTBLS123 \
+mtbls submission validate MTBLS123 \
+  --metadata-files-path ./metadata/MTBLS123 \
+  --data-files-root-path ./data \
   --validation-input-path ./reports/MTBLS123_validation_input.json \
-  -o ./reports/MTBLS123_local_validation_report.json
+  -o ./reports/MTBLS123_validation_report.json
 ```
 
 By default, the command uses `./bundle.tar.gz` and downloads the latest validation bundle from:
@@ -343,19 +364,133 @@ By default, the command uses `./bundle.tar.gz` and downloads the latest validati
 https://ebi-metabolights.github.io/mtbls-validation/bundle.tar.gz
 ```
 
-Use a specific bundle:
+Use a specific local OPA bundle:
 
 ```bash
-mtbls submission validate-local MTBLS123 \
-  --validation-bundle-path ./bundle.tar.gz
+mtbls submission validate MTBLS123 \
+  --metadata-files-path ./metadata/MTBLS123 \
+  --data-files-root-path ./data \
+  --validation-bundle-path ./bundle.tar.gz \
+  -o ./reports/MTBLS123_validation_report.json
 ```
 
 Force a fresh bundle download:
 
 ```bash
-mtbls submission validate-local MTBLS123 \
-  --refetch-validation-bundle
+mtbls submission validate MTBLS123 \
+  --metadata-files-path ./metadata/MTBLS123 \
+  --data-files-root-path ./data \
+  --refetch-validation-bundle \
+  -o ./reports/MTBLS123_validation_report.json
 ```
+
+### Local WASM validation
+
+Use `--mtbls-validation-wasm-path` or `--mtbls-validation-wasm-url` to run local validation with a WASM artifact instead of the default OPA bundle.
+
+Two artifact types are supported:
+
+| Artifact | Runtime requirement |
+| --- | --- |
+| Standalone WebAssembly binary | `wasmtime` executable |
+| OPA WASM bundle, such as `mtbls-validation.wasm` containing `policy.wasm` and `.manifest` | OPA executable with WebAssembly support |
+
+Install `wasmtime` only if you are using a standalone WebAssembly binary:
+
+```bash
+brew install wasmtime
+wasmtime --version
+```
+
+For an OPA WASM bundle, install an official OPA binary with WebAssembly support. Homebrew OPA may report `WebAssembly: unavailable`; in that case use the official binary below.
+
+Install on macOS Apple Silicon:
+
+```bash
+mkdir -p ~/bin
+curl -L -o ~/bin/opa-wasm https://openpolicyagent.org/downloads/latest/opa_darwin_arm64
+chmod 755 ~/bin/opa-wasm
+~/bin/opa-wasm version
+```
+
+For Intel macOS, use this download URL instead:
+
+```bash
+mkdir -p ~/bin
+curl -L -o ~/bin/opa-wasm https://openpolicyagent.org/downloads/latest/opa_darwin_amd64
+chmod 755 ~/bin/opa-wasm
+~/bin/opa-wasm version
+```
+
+Install on Linux x86_64:
+
+```bash
+mkdir -p ~/bin
+curl -L -o ~/bin/opa-wasm https://openpolicyagent.org/downloads/latest/opa_linux_amd64_static
+chmod 755 ~/bin/opa-wasm
+~/bin/opa-wasm version
+```
+
+Install on Linux ARM64:
+
+```bash
+mkdir -p ~/bin
+curl -L -o ~/bin/opa-wasm https://openpolicyagent.org/downloads/latest/opa_linux_arm64_static
+chmod 755 ~/bin/opa-wasm
+~/bin/opa-wasm version
+```
+
+Install on Windows x86_64 with PowerShell:
+
+```powershell
+New-Item -ItemType Directory -Force "$env:USERPROFILE\bin"
+Invoke-WebRequest -Uri "https://openpolicyagent.org/downloads/latest/opa_windows_amd64.exe" -OutFile "$env:USERPROFILE\bin\opa-wasm.exe"
+& "$env:USERPROFILE\bin\opa-wasm.exe" version
+```
+
+The version output must include:
+
+```text
+WebAssembly: available
+```
+
+Run local validation with an OPA WASM bundle:
+
+```bash
+mtbls submission validate MTBLS123 \
+  --metadata-files-path ./metadata/MTBLS123 \
+  --data-files-root-path ./data \
+  --mtbls-validation-wasm-path ./mtbls-validation.wasm \
+  --opa-executable-path ~/bin/opa-wasm \
+  --validation-input-path ./reports/MTBLS123_validation_input.json \
+  -o ./reports/MTBLS123_validation_report.json
+```
+
+On Windows, use the downloaded executable path:
+
+```powershell
+mtbls submission validate MTBLS123 `
+  --metadata-files-path .\metadata\MTBLS123 `
+  --data-files-root-path .\data `
+  --mtbls-validation-wasm-path .\mtbls-validation.wasm `
+  --opa-executable-path "$env:USERPROFILE\bin\opa-wasm.exe" `
+  --validation-input-path .\reports\MTBLS123_validation_input.json `
+  -o .\reports\MTBLS123_validation_report.json
+```
+
+Run local validation by downloading the OPA WASM bundle from a URL:
+
+```bash
+mtbls submission validate MTBLS123 \
+  --metadata-files-path ./metadata/MTBLS123 \
+  --data-files-root-path ./data \
+  --mtbls-validation-wasm-url https://ebi-metabolights.github.io/mtbls-validation/mtbls-validation.wasm \
+  --opa-executable-path ~/bin/opa-wasm \
+  --validation-input-path ./reports/MTBLS123_validation_input.json \
+  -o ./reports/MTBLS123_validation_report.json
+```
+
+If OPA reports `WebAssembly: unavailable`, `engine not found`, or `wasm target not supported`, run without `--mtbls-validation-wasm-path` or `--mtbls-validation-wasm-url` to use the default local OPA bundle workflow.
 
 Ignore specific validation rule IDs or metadata files with a text file:
 
@@ -367,11 +502,41 @@ a_MTBLS123.txt
 Then run:
 
 ```bash
-mtbls submission validate-local MTBLS123 \
+mtbls submission validate MTBLS123 \
+  --data-files-root-path ./data \
   --overridden-rules-file-path ./validation_overrides.txt
 ```
 
-### 7. Get Private FTP Credentials
+Run remote validation through the MetaboLights submission API:
+
+```bash
+mtbls submission validate MTBLS123 \
+  --data-files-root-path ./data \
+  --remote-validation
+```
+
+Override the configured submission and validation endpoints for remote validation:
+
+```bash
+mtbls submission validate MTBLS123 \
+  --data-files-root-path ./data \
+  --remote-validation \
+  --mtbls-submission-endpoint https://www.ebi.ac.uk/metabolights/ws \
+  --mtbls-validation-endpoint https://www.ebi.ac.uk/metabolights/ws3
+```
+
+Control remote polling:
+
+```bash
+mtbls submission validate MTBLS123 \
+  --data-files-root-path ./data \
+  --remote-validation \
+  --max-polls 180 \
+  --poll-interval 10 \
+  -o validation_report.json
+```
+
+### 6. Get Private FTP Credentials
 
 Large data files are uploaded through the private FTP area. Retrieve credentials for a study:
 
@@ -386,6 +551,56 @@ mtbls submission ftp-credentials MTBLS123 -o ftp_credentials.json
 ```
 
 Use the returned host, user, password, and folder with your preferred FTP/SFTP client according to the current MetaboLights upload instructions.
+
+### 7. Upload Data Files
+
+Upload all files under a local data root to the study private FTP area:
+
+```bash
+mtbls submission upload-data MTBLS123 --data-files-root-path ./data
+```
+
+Upload selected files or folders:
+
+```bash
+mtbls submission upload-data MTBLS123 \
+  --data-files-root-path ./data \
+  --selected-files folder1/folder2,folder1
+```
+
+Skip local files or folders from the upload selection:
+
+```bash
+mtbls submission upload-data MTBLS123 \
+  --data-files-root-path ./data \
+  --skip-uploaded-files folder1/old.raw,folder2
+```
+
+Skip selected empty folders:
+
+```bash
+mtbls submission upload-data MTBLS123 \
+  --data-files-root-path ./data \
+  --skip-empty-folders empty-folder
+```
+
+Override the configured MetaboLights API endpoint for one upload:
+
+```bash
+mtbls submission upload-data MTBLS123 \
+  --data-files-root-path ./data \
+  --mtbls-submission-endpoint https://www.ebi.ac.uk/metabolights/ws
+```
+
+Save upload options and results:
+
+```bash
+mtbls submission upload-data MTBLS123 --data-files-root-path ./data -o data_upload_response.json
+```
+
+Before uploading, the command indexes the study FTP folder and skips local files already present remotely with the same relative path and file size.
+
+Each data file is uploaded to a temporary hidden FTP name first, using the prefix `.ftp_`. After the transfer completes, mtblspy renames it to the final file name. If an upload is interrupted before the rename, the remaining `.ftp_...` file on the FTP server indicates an incomplete upload.
 
 ### 8. Compress Agilent `.d` Data Folders
 
@@ -433,11 +648,8 @@ Examples:
 mtbls submission templates study-creation-input -o my_study.json
 # ~/metabolights_data/submission/data/my_study.json
 
-mtbls submission validate MTBLS123 -o validation.json
+mtbls submission validate MTBLS123 --data-files-root-path ./data -o validation.json
 # ~/metabolights_data/submission/cache/MTBLS123/validation.json
-
-mtbls submission validate-local MTBLS123 -o local_validation.json
-# ~/metabolights_data/submission/cache/MTBLS123/local_validation.json
 
 mtbls submission ftp-credentials MTBLS123 -o ./secure/ftp.json
 # ./secure/ftp.json
@@ -479,11 +691,52 @@ mtbls --help
 | `mtbls submission list` | List studies created by the authenticated user |
 | `mtbls submission create` | Create a provisional study from a JSON input file |
 | `mtbls submission ftp-credentials STUDY_ID` | Get private FTP upload credentials |
+| `mtbls submission upload-data STUDY_ID --data-files-root-path PATH` | Upload data files to the private FTP area |
 | `mtbls submission metadata-upload STUDY_ID` | Upload ISA-Tab metadata files |
 | `mtbls submission compress-data-files STUDY_ID` | Compress local `.d` data folders to `.d.zip` files |
-| `mtbls submission validate STUDY_ID` | Run remote study validation through the MetaboLights submission API |
-| `mtbls submission validate-local STUDY_ID` | Run local validation with OPA and the MetaboLights validation bundle |
+| `mtbls submission validate STUDY_ID --data-files-root-path PATH` | Run local validation with OPA by default, or remote validation with `--remote-validation` |
 | `mtbls submission templates study-creation-input` | Generate a study creation JSON template |
+| `mtbls submission templates isa-tab-file FILE_TYPE` | Download an ISA-Tab metadata file template |
+| `mtbls submission templates result-file` | Download a result file template |
+
+### Command Options
+
+Use `-h` or `--help` with any command to see the same options in the terminal.
+
+#### Top-Level Options
+
+| Command | Arguments | Options |
+| --- | --- | --- |
+| `mtbls` | `COMMAND [ARGS]...` | `--version`, `-h`, `--help` |
+
+#### Authentication Options
+
+| Command | Arguments | Options |
+| --- | --- | --- |
+| `mtbls auth login` | None | `--user`, `--username`, `--password`, `--base-url` |
+| `mtbls auth logout` | None | `--base-url` |
+
+#### Configuration Options
+
+| Command | Arguments | Options |
+| --- | --- | --- |
+| `mtbls config show` | None | `-o`, `--output` |
+| `mtbls config set` | None | `--base-url` |
+
+#### Submission Options
+
+| Command | Arguments | Options |
+| --- | --- | --- |
+| `mtbls submission list` | None | `-o`, `--output` |
+| `mtbls submission create` | None | `--input-file`, `--input-format`, `-o`, `--output` |
+| `mtbls submission ftp-credentials` | `STUDY_ID` | `-o`, `--output` |
+| `mtbls submission metadata-upload` | `STUDY_ID` | `--default-submission-data-path`, `-p`, `--metadata-files-path`, `--metadata-path`, `--mtbls-submission-endpoint`, `--selected-files`, `-o`, `--output` |
+| `mtbls submission upload-data` | `STUDY_ID` | `--data-files-root-path`, `--selected-files`, `--skip-uploaded-files`, `--skip-empty-folders`, `--mtbls-submission-endpoint`, `-o`, `--output` |
+| `mtbls submission validate` | `STUDY_ID` | `--default-submission-data-path`, `-p`, `--metadata-files-path`, `--metadata-path`, `--data-files-root-path`, `--remote-validation`, `--mtbls-validation-wasm-path`, `--mtbls-validation-wasm-url`, `--mtbls-validation-endpoint`, `--mtbls-submission-endpoint`, `--validation-bundle-path`, `--mtbls-validation-bundle-path`, `--validation-bundle-url`, `--mtbls-validation-bundle-url`, `--refetch-validation-bundle`, `--opa-executable-path`, `--validation-input-path`, `--config-file`, `--overridden-rules-file-path`, `--max-polls`, `--poll-interval`, `--timeout`, `-o`, `-v`, `--output`, `--validation-file-path`, `--validation_file_path`, `--output-format` |
+| `mtbls submission compress-data-files` | `STUDY_ID` | `-p`, `--study-path`, `--files-path`, `--metadata-path`, `--overwrite`, `--no-overwrite`, `--update-metadata`, `--no-update-metadata`, `--remove-original` |
+| `mtbls submission templates study-creation-input` | None | `-o`, `--output`, `--data-folder`, `--overwrite`, `--no-overwrite` |
+| `mtbls submission templates isa-tab-file` | `FILE_TYPE` | `--template-name`, `--version`, `--target-path`, `--override-current`, `--mtbls-validation-endpoint` |
+| `mtbls submission templates result-file` | None | `--file-type`, `--template-name`, `--version`, `--target-path`, `--override-current`, `--mtbls-validation-endpoint` |
 
 ## Study Creation Input
 
@@ -521,7 +774,7 @@ Local validation reports include:
 | --- | --- |
 | `accession` | Study accession used for validation |
 | `status` | `success` or `failed` |
-| `validationResult` | Full validation bundle output from OPA |
+| `validationResult` | Full local validation output from OPA or WASM |
 | `errors` | Validation errors that were not overridden |
 | `overrides` | Error rules ignored through a validation override config |
 
@@ -572,7 +825,11 @@ Credentials are stored using the system keyring. If keyring storage fails, check
 Increase polling limits:
 
 ```bash
-mtbls submission validate MTBLS123 --max-polls 240 --poll-interval 10
+mtbls submission validate MTBLS123 \
+  --data-files-root-path ./data \
+  --remote-validation \
+  --max-polls 240 \
+  --poll-interval 10
 ```
 
 ### Output File Is In The Wrong Folder
@@ -580,13 +837,13 @@ mtbls submission validate MTBLS123 --max-polls 240 --poll-interval 10
 Filename-only output values are intentionally saved to the command's default data/cache folder:
 
 ```bash
-mtbls submission validate MTBLS123 -o validation.json
+mtbls submission validate MTBLS123 --data-files-root-path ./data -o validation.json
 ```
 
 Use an explicit relative or absolute path to save somewhere else:
 
 ```bash
-mtbls submission validate MTBLS123 -o ./reports/validation.json
+mtbls submission validate MTBLS123 --data-files-root-path ./data -o ./reports/validation.json
 ```
 
 ## License

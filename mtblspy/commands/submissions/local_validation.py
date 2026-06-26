@@ -1,5 +1,10 @@
+import gzip
 import json
+import shutil
+import socket
 import subprocess
+import tarfile
+import time
 from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
@@ -7,7 +12,11 @@ from pathlib import Path
 import requests
 
 from mtblspy.commands.output import resolve_json_output_path, write_json_file
-from mtblspy.commands.submissions.client import DEFAULT_LOCAL_SUBMISSION_CACHE_PATH, normalize_study_id
+from mtblspy.commands.submissions.client import (
+    DEFAULT_LOCAL_SUBMISSION_CACHE_PATH,
+    DEFAULT_LOCAL_SUBMISSION_DATA_PATH,
+    normalize_study_id,
+)
 from mtblspy.commands.submissions.exceptions import SubmissionAPIError
 
 DEFAULT_VALIDATION_BUNDLE_URL = "https://ebi-metabolights.github.io/mtbls-validation/bundle.tar.gz"
@@ -23,14 +32,23 @@ class LocalValidationResult:
     validation_input_path: Path
 
 
+@dataclass
+class ValidationWasmArtifact:
+    path: Path
+    artifact_type: str
+
+
 def run_local_validation(
     study_id,
     metadata_path=None,
     data_files_path=None,
+    default_submission_data_path=None,
     validation_bundle_path=DEFAULT_VALIDATION_BUNDLE_PATH,
     validation_bundle_url=DEFAULT_VALIDATION_BUNDLE_URL,
     refetch_validation_bundle=False,
     opa_executable_path="opa",
+    validation_wasm_path=None,
+    validation_wasm_url=None,
     validation_file_path=None,
     validation_input_path=None,
     config_file=None,
@@ -39,19 +57,28 @@ def run_local_validation(
 ):
     study_id = normalize_study_id(study_id)
     default_cache_directory = DEFAULT_LOCAL_SUBMISSION_CACHE_PATH / study_id
-    metadata_path = resolve_metadata_path(study_id, metadata_path)
+    metadata_path = resolve_metadata_path(study_id, metadata_path, default_submission_data_path)
     if not data_files_path:
         data_files_path = metadata_path / "FILES"
     validation_input = load_local_validation_input(study_id, metadata_path, data_files_path)
     validation_input_path = save_local_validation_input(study_id, validation_input, validation_input_path)
-    validation_result = run_opa_validation(
-        validation_input_path,
-        validation_bundle_path=validation_bundle_path,
-        validation_bundle_url=validation_bundle_url,
-        refetch_validation_bundle=refetch_validation_bundle,
-        opa_executable_path=opa_executable_path,
-        timeout=timeout,
-    )
+    if validation_wasm_path or validation_wasm_url:
+        validation_result = run_wasm_validation(
+            validation_input_path,
+            validation_wasm_path=validation_wasm_path,
+            validation_wasm_url=validation_wasm_url,
+            opa_executable_path=opa_executable_path,
+            timeout=timeout,
+        )
+    else:
+        validation_result = run_opa_validation(
+            validation_input_path,
+            validation_bundle_path=validation_bundle_path,
+            validation_bundle_url=validation_bundle_url,
+            refetch_validation_bundle=refetch_validation_bundle,
+            opa_executable_path=opa_executable_path,
+            timeout=timeout,
+        )
 
     overridden_rule_ids, overridden_files = get_overrides(config_file, overridden_rules_file_path)
     errors, overrides = split_validation_errors(validation_result, overridden_rule_ids, overridden_files)
@@ -76,10 +103,11 @@ def run_local_validation(
     )
 
 
-def resolve_metadata_path(study_id, metadata_path=None):
+def resolve_metadata_path(study_id, metadata_path=None, default_submission_data_path=None):
     if metadata_path:
         return Path(metadata_path).expanduser().resolve()
-    return (Path.home() / "metabolights_data" / "submission" / "data" / study_id).resolve()
+    default_data_path = Path(default_submission_data_path).expanduser() if default_submission_data_path else DEFAULT_LOCAL_SUBMISSION_DATA_PATH
+    return (default_data_path / study_id).resolve()
 
 
 def load_local_validation_input(study_id, metadata_path, data_files_path):
@@ -1065,6 +1093,213 @@ def ensure_validation_bundle(validation_bundle_path, validation_bundle_url, refe
     response.raise_for_status()
     validation_bundle_path.write_bytes(response.content)
     return validation_bundle_path
+
+
+def run_wasm_validation(
+    validation_input_path,
+    validation_wasm_path=None,
+    validation_wasm_url=None,
+    timeout=LOCAL_VALIDATION_TIMEOUT_SECONDS,
+    wasmtime_executable_path="wasmtime",
+    opa_executable_path="opa",
+):
+    validation_wasm_artifact = ensure_validation_wasm(validation_wasm_path, validation_wasm_url)
+    if validation_wasm_artifact.artifact_type == "opa_wasm_bundle":
+        return run_opa_wasm_bundle_validation(
+            validation_input_path,
+            validation_wasm_artifact.path,
+            opa_executable_path=opa_executable_path,
+            timeout=timeout,
+        )
+
+    wasmtime_path = shutil.which(wasmtime_executable_path)
+    if not wasmtime_path:
+        raise SubmissionAPIError(
+            "WASM validation requires the wasmtime executable. "
+            "Install wasmtime or run validation without --mtbls-validation-wasm-path/--mtbls-validation-wasm-url "
+            "to use the default OPA bundle."
+        )
+
+    command = [
+        wasmtime_path,
+        str(validation_wasm_artifact.path),
+        str(Path(validation_input_path).expanduser().resolve()),
+    ]
+    try:
+        task = subprocess.run(command, capture_output=True, text=True, check=True, timeout=timeout)
+    except subprocess.TimeoutExpired as exc:
+        raise SubmissionAPIError("The WASM validation process timed out.") from exc
+    except subprocess.CalledProcessError as exc:
+        message = exc.stderr or exc.stdout or str(exc)
+        raise SubmissionAPIError(f"The WASM validation process failed: {message}") from exc
+
+    return parse_wasm_validation_output(task.stdout)
+
+
+def run_opa_wasm_bundle_validation(
+    validation_input_path,
+    validation_wasm_bundle_path,
+    opa_executable_path="opa",
+    timeout=LOCAL_VALIDATION_TIMEOUT_SECONDS,
+):
+    port = get_free_local_port()
+    base_url = f"http://127.0.0.1:{port}"
+    command = [
+        opa_executable_path,
+        "run",
+        "--server",
+        "--addr",
+        f"127.0.0.1:{port}",
+        "--bundle",
+        str(Path(validation_wasm_bundle_path).expanduser().resolve()),
+    ]
+    try:
+        process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    except FileNotFoundError as exc:
+        raise SubmissionAPIError(
+            f"OPA executable not found: {opa_executable_path}. "
+            "OPA WASM bundle validation requires an OPA executable with WebAssembly support."
+        ) from exc
+
+    try:
+        wait_for_opa_server(process, f"{base_url}/health", timeout=min(15, timeout))
+        with Path(validation_input_path).expanduser().resolve().open(encoding="utf-8") as file:
+            validation_input = json.load(file)
+        response = requests.post(
+            f"{base_url}/v1/data/metabolights/validation/v2/report/complete_report",
+            json={"input": validation_input},
+            timeout=timeout,
+        )
+        response.raise_for_status()
+        result = response.json()
+    except requests.RequestException as exc:
+        raise SubmissionAPIError(f"The WASM validation process failed: {exc}") from exc
+    except json.JSONDecodeError as exc:
+        raise SubmissionAPIError("WASM validation output is not valid JSON.") from exc
+    finally:
+        stop_opa_server(process)
+
+    if "result" not in result:
+        raise SubmissionAPIError("WASM validation output did not include a validation result.")
+    return result["result"]
+
+
+def get_free_local_port():
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server_socket:
+        server_socket.bind(("127.0.0.1", 0))
+        return server_socket.getsockname()[1]
+
+
+def wait_for_opa_server(process, health_url, timeout=15):
+    deadline = time.monotonic() + timeout
+    last_error = None
+    while time.monotonic() < deadline:
+        if process.poll() is not None:
+            stdout, stderr = process.communicate()
+            message = stderr or stdout or "OPA server exited before it was ready."
+            if "WebAssembly: unavailable" in message or "engine not found" in message or "wasm" in message.lower():
+                raise SubmissionAPIError(
+                    "OPA WASM bundle validation requires an OPA executable with WebAssembly support. "
+                    "The configured OPA executable could not initialize a WASM engine. "
+                    "Run validation without --mtbls-validation-wasm-path/--mtbls-validation-wasm-url "
+                    "to use the default OPA bundle."
+                )
+            raise SubmissionAPIError(f"The WASM validation process failed: {message}")
+        try:
+            requests.get(health_url, timeout=1).raise_for_status()
+            return
+        except requests.RequestException as exc:
+            last_error = exc
+            time.sleep(0.1)
+    raise SubmissionAPIError(f"The WASM validation process timed out while starting OPA server: {last_error}")
+
+
+def stop_opa_server(process):
+    if process.poll() is not None:
+        return
+    process.terminate()
+    try:
+        process.communicate(timeout=5)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.communicate()
+
+
+def ensure_validation_wasm(validation_wasm_path=None, validation_wasm_url=None):
+    if validation_wasm_path:
+        validation_wasm_path = Path(validation_wasm_path).expanduser().resolve()
+        if validation_wasm_path.exists():
+            return prepare_validation_wasm_artifact(validation_wasm_path)
+        if not validation_wasm_url:
+            raise SubmissionAPIError(f"Validation WASM does not exist on {validation_wasm_path}")
+    elif validation_wasm_url:
+        validation_wasm_path = DEFAULT_LOCAL_SUBMISSION_CACHE_PATH / "validation.wasm"
+    else:
+        raise SubmissionAPIError("Validation WASM path or URL is required for WASM validation.")
+
+    response = requests.get(validation_wasm_url, timeout=60)
+    response.raise_for_status()
+    validation_wasm_path.parent.mkdir(parents=True, exist_ok=True)
+    validation_wasm_path.write_bytes(response.content)
+    return prepare_validation_wasm_artifact(validation_wasm_path)
+
+
+def normalize_validation_wasm_file(validation_wasm_path):
+    artifact = prepare_validation_wasm_artifact(validation_wasm_path)
+    if artifact.artifact_type == "wasm":
+        return artifact.path
+    raise SubmissionAPIError(
+        f"Validation WASM path is an OPA WASM bundle, not a standalone WebAssembly binary: {artifact.path}"
+    )
+
+
+def prepare_validation_wasm_artifact(validation_wasm_path):
+    validation_wasm_path = Path(validation_wasm_path).expanduser().resolve()
+    wasm_bytes = validation_wasm_path.read_bytes()
+    if wasm_bytes.startswith(b"\x00asm"):
+        return ValidationWasmArtifact(path=validation_wasm_path, artifact_type="wasm")
+
+    if is_opa_wasm_bundle(validation_wasm_path):
+        bundle_path = validation_wasm_path
+        if not wasm_bytes.startswith(b"\x1f\x8b"):
+            bundle_path = gzip_opa_wasm_bundle(validation_wasm_path, wasm_bytes)
+        return ValidationWasmArtifact(path=bundle_path, artifact_type="opa_wasm_bundle")
+
+    if wasm_bytes.startswith(b"\x1f\x8b"):
+        try:
+            decompressed_bytes = gzip.decompress(wasm_bytes)
+        except OSError as exc:
+            raise SubmissionAPIError(f"Validation WASM is gzip-compressed but could not be decompressed: {exc}") from exc
+        validation_wasm_path.write_bytes(decompressed_bytes)
+        if validation_wasm_path.read_bytes().startswith(b"\x00asm"):
+            return ValidationWasmArtifact(path=validation_wasm_path, artifact_type="wasm")
+    raise SubmissionAPIError(f"Validation WASM is not a valid WebAssembly binary: {validation_wasm_path}")
+
+
+def is_opa_wasm_bundle(path):
+    try:
+        with tarfile.open(path, mode="r:*") as archive:
+            names = {member.name.lstrip("/") for member in archive.getmembers()}
+    except tarfile.TarError:
+        return False
+    return "policy.wasm" in names and ".manifest" in names
+
+
+def gzip_opa_wasm_bundle(bundle_path, bundle_bytes):
+    bundle_path = Path(bundle_path).expanduser().resolve()
+    target_path = DEFAULT_LOCAL_SUBMISSION_CACHE_PATH / "validation_wasm_bundle" / f"{sha256_file(bundle_path)[:16]}.tar.gz"
+    if not target_path.exists():
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        target_path.write_bytes(gzip.compress(bundle_bytes))
+    return target_path
+
+
+def parse_wasm_validation_output(output):
+    try:
+        result = json.loads(output)
+    except json.JSONDecodeError as exc:
+        raise SubmissionAPIError("WASM validation output is not valid JSON.") from exc
+    return result.get("validationResult", result)
 
 
 def parse_opa_validation_output(output):

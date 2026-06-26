@@ -1,4 +1,8 @@
+import gzip
+import io
 import json
+import tarfile
+from types import SimpleNamespace
 
 import pytest
 
@@ -6,7 +10,10 @@ from mtblspy.commands.submissions.exceptions import SubmissionAPIError
 from mtblspy.commands.submissions.local_validation import (
     get_text_overrides,
     load_local_validation_input,
+    normalize_validation_wasm_file,
+    prepare_validation_wasm_artifact,
     parse_opa_validation_output,
+    run_wasm_validation,
     split_validation_errors,
 )
 
@@ -75,6 +82,109 @@ def test_text_overrides_include_rule_ids_and_metadata_files(tmp_path):
 
     assert rule_ids == {"rule_i_100_001"}
     assert files == {"a_MTBLS123.txt"}
+
+
+def test_normalize_validation_wasm_file_decompresses_gzip_cache(tmp_path):
+    wasm_path = tmp_path / "validation.wasm"
+    wasm_bytes = b"\x00asm\x01\x00\x00\x00"
+    wasm_path.write_bytes(gzip.compress(wasm_bytes))
+
+    normalized_path = normalize_validation_wasm_file(wasm_path)
+
+    assert normalized_path == wasm_path.resolve()
+    assert wasm_path.read_bytes() == wasm_bytes
+
+
+def test_prepare_validation_wasm_artifact_gzips_plain_opa_wasm_bundle(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        "mtblspy.commands.submissions.local_validation.DEFAULT_LOCAL_SUBMISSION_CACHE_PATH",
+        tmp_path / "cache",
+    )
+    bundle_path = tmp_path / "mtbls-validation.wasm"
+    with tarfile.open(bundle_path, "w") as archive:
+        for name, content in {
+            "/policy.wasm": b"\x00asm\x01\x00\x00\x00",
+            "/.manifest": b'{"wasm":[]}',
+        }.items():
+            info = tarfile.TarInfo(name)
+            info.size = len(content)
+            archive.addfile(info, io.BytesIO(content))
+
+    artifact = prepare_validation_wasm_artifact(bundle_path)
+
+    assert artifact.artifact_type == "opa_wasm_bundle"
+    assert artifact.path != bundle_path.resolve()
+    assert artifact.path.suffixes[-2:] == [".tar", ".gz"]
+    assert artifact.path.read_bytes().startswith(b"\x1f\x8b")
+
+
+def test_run_wasm_validation_uses_opa_for_gzipped_opa_wasm_bundle(tmp_path, monkeypatch):
+    input_path = tmp_path / "input.json"
+    input_path.write_text("{}", encoding="utf-8")
+    bundle_path = tmp_path / "mtbls-validation.wasm"
+    with tarfile.open(bundle_path, "w:gz") as archive:
+        for name, content in {
+            "/policy.wasm": b"\x00asm\x01\x00\x00\x00",
+            "/.manifest": b'{"wasm":[]}',
+        }.items():
+            info = tarfile.TarInfo(name)
+            info.size = len(content)
+            archive.addfile(info, io.BytesIO(content))
+
+    popen_calls = []
+    post_calls = []
+
+    class FakeProcess:
+        stdout = None
+        stderr = None
+
+        def poll(self):
+            return None
+
+        def terminate(self):
+            return None
+
+        def communicate(self, timeout=None):
+            return "", ""
+
+        def kill(self):
+            return None
+
+    class FakeResponse:
+        def __init__(self, payload=None):
+            self.payload = payload or {}
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return self.payload
+
+    def fake_popen(command, **kwargs):
+        popen_calls.append(command)
+        return FakeProcess()
+
+    def fake_post(url, **kwargs):
+        post_calls.append((url, kwargs))
+        return FakeResponse({"result": {"violations": []}})
+
+    monkeypatch.setattr("mtblspy.commands.submissions.local_validation.get_free_local_port", lambda: 8182)
+    monkeypatch.setattr("mtblspy.commands.submissions.local_validation.subprocess.Popen", fake_popen)
+    monkeypatch.setattr(
+        "mtblspy.commands.submissions.local_validation.requests",
+        SimpleNamespace(
+            RequestException=Exception,
+            get=lambda *args, **kwargs: FakeResponse(),
+            post=fake_post,
+        ),
+    )
+
+    result = run_wasm_validation(input_path, validation_wasm_path=bundle_path, opa_executable_path="opa-with-wasm")
+
+    assert result == {"violations": []}
+    assert popen_calls[0][:5] == ["opa-with-wasm", "run", "--server", "--addr", "127.0.0.1:8182"]
+    assert post_calls[0][0] == "http://127.0.0.1:8182/v1/data/metabolights/validation/v2/report/complete_report"
+    assert post_calls[0][1]["json"] == {"input": {}}
 
 
 def test_split_validation_errors_filters_file_overrides():
