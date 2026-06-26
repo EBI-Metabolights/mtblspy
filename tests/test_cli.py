@@ -1,5 +1,6 @@
 import json
 import zipfile
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -477,9 +478,9 @@ def test_submission_upload_data_writes_json_output(mock_client_cls, runner, tmp_
 
 
 @patch("mtblspy.commands.submissions.submission_validate.SubmissionClient")
-def test_submission_validate_prints_report(mock_client_cls, runner, tmp_path):
+def test_submission_validate_remote_prints_json_report(mock_client_cls, runner, tmp_path):
     report_path = tmp_path / "validation-report.json"
-    report_path.write_text('{"messages": {"violations": []}}\n', encoding="utf-8")
+    report_path.write_text('{"accession": "MTBLS123", "messages": {"violations": []}}\n', encoding="utf-8")
 
     validation_result = MagicMock()
     validation_result.errors = []
@@ -491,13 +492,22 @@ def test_submission_validate_prints_report(mock_client_cls, runner, tmp_path):
 
     result = runner.invoke(
         cli,
-        ["submission", "validate", "MTBLS123", "--validation-file-path", str(report_path)],
+        [
+            "submission",
+            "validate",
+            "MTBLS123",
+            "--data-files-root-path",
+            str(tmp_path),
+            "--remote-validation",
+            "--validation-file-path",
+            str(report_path),
+        ],
     )
 
     assert result.exit_code == 0
-    assert "Validation completed successfully. No validation errors found." in result.output
-    assert '{"messages": {"violations": []}}' in result.output
-    assert f"Validation report is saved as {report_path}" in result.output
+    payload = json.loads(result.output)
+    assert payload["accession"] == "MTBLS123"
+    assert payload["messages"] == {"violations": []}
     client.validate_study.assert_called_once_with(
         "MTBLS123",
         validation_file_path=str(report_path),
@@ -506,13 +516,13 @@ def test_submission_validate_prints_report(mock_client_cls, runner, tmp_path):
     )
 
 
-def test_submission_help_shows_remote_and_local_validation(runner):
+def test_submission_help_shows_validate_without_validate_local(runner):
     result = runner.invoke(cli, ["submission", "--help"])
 
     assert result.exit_code == 0
     assert "compress-data-files" in result.output
     assert "validate" in result.output
-    assert "validate-local" in result.output
+    assert "validate-local" not in result.output
 
 
 def test_submission_compress_data_files_zips_dot_d_and_updates_metadata(runner, tmp_path):
@@ -593,10 +603,11 @@ def test_submission_compress_data_files_can_remove_original_directories(runner, 
     assert "Removed 1 original .d directory." in result.output
 
 
-@patch("mtblspy.commands.submissions.submission_validate_local.run_local_validation")
-def test_submission_validate_local_command(mock_run_local_validation, runner, tmp_path):
+@patch("mtblspy.commands.submissions.submission_validate.run_local_validation")
+def test_submission_validate_runs_local_validation_by_default(mock_run_local_validation, runner, tmp_path):
     report_path = tmp_path / "local-validation-report.json"
     input_path = tmp_path / "local-validation-input.json"
+    report_path.write_text('{"accession": "MTBLS123", "status": "success", "errors": []}\n', encoding="utf-8")
     mock_run_local_validation.return_value = LocalValidationResult(
         report={"status": "success", "errors": []},
         errors=[],
@@ -608,10 +619,12 @@ def test_submission_validate_local_command(mock_run_local_validation, runner, tm
         cli,
         [
             "submission",
-            "validate-local",
+            "validate",
             "MTBLS123",
-            "--metadata-path",
+            "--metadata-files-path",
             str(tmp_path),
+            "--data-files-root-path",
+            str(tmp_path / "FILES"),
             "-o",
             "local-report.json",
             "--validation-input-path",
@@ -620,16 +633,19 @@ def test_submission_validate_local_command(mock_run_local_validation, runner, tm
     )
 
     assert result.exit_code == 0
-    assert "Local validation completed successfully" in result.output
-    assert f"Local validation report is saved as {report_path}" in result.output
+    payload = json.loads(result.output)
+    assert payload["status"] == "success"
     mock_run_local_validation.assert_called_once_with(
         "MTBLS123",
         metadata_path=str(tmp_path),
-        data_files_path=None,
+        data_files_path=str(tmp_path / "FILES"),
+        default_submission_data_path=str(Path.home() / "metabolights_data" / "submission" / "data"),
         validation_bundle_path="./bundle.tar.gz",
         validation_bundle_url="https://ebi-metabolights.github.io/mtbls-validation/bundle.tar.gz",
         refetch_validation_bundle=False,
         opa_executable_path="opa",
+        validation_wasm_path=None,
+        validation_wasm_url=None,
         validation_file_path="local-report.json",
         validation_input_path=str(input_path),
         config_file=None,

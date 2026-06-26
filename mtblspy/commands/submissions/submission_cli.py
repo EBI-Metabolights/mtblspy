@@ -8,7 +8,6 @@ from mtblspy.commands.submissions.submission_templates import submission_templat
 from mtblspy.commands.submissions.submission_upload_data import upload_data
 from mtblspy.commands.submissions.submission_upload_metadata import upload_metadata
 from mtblspy.commands.submissions.submission_validate import validate_submission
-from mtblspy.commands.submissions.submission_validate_local import validate_local_submission
 
 
 @click.group(name="submission")
@@ -22,7 +21,6 @@ submission_cli.add_command(private_ftp_credentials)
 submission_cli.add_command(upload_data)
 submission_cli.add_command(upload_metadata)
 submission_cli.add_command(validate_submission)
-submission_cli.add_command(validate_local_submission)
 # submission_cli.add_command(validation_debug)
 submission_cli.add_command(submission_templates)
 submission_cli.add_command(compress_data_files)
