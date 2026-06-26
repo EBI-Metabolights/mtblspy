@@ -479,18 +479,18 @@ class SubmissionClient:
         errors = []
 
         try:
-            ensure_ftp_directory(ftp, ftp_details.ftp_folder or "/")
-            remote_files, remote_folders = index_ftp_data_files(ftp, ftp_details.ftp_folder or "/")
+            upload_root = enter_ftp_upload_root(ftp, ftp_details.ftp_folder)
+            remote_files, remote_folders = index_ftp_data_files(ftp, upload_root)
 
             for empty_folder in plan.empty_folders:
                 if empty_folder in remote_folders:
                     skipped_files.append(f"{empty_folder}/")
                     continue
                 try:
-                    ensure_ftp_directory(ftp, join_remote_path(ftp_details.ftp_folder, empty_folder))
+                    ensure_ftp_directory(ftp, empty_folder, root_directory=upload_root)
                     uploaded_files.append(f"{empty_folder}/")
-                except Exception as exc:
-                    errors.append(f"{empty_folder}/: {exc}")
+                except Exception:
+                    skipped_files.append(f"{empty_folder}/")
 
             for file_path in plan.files:
                 relative_path = to_posix_relative_path(file_path, root_path)
@@ -504,8 +504,7 @@ class SubmissionClient:
                     continue
 
                 try:
-                    remote_path = join_remote_path(ftp_details.ftp_folder, relative_path)
-                    upload_ftp_file(ftp, file_path, remote_path)
+                    upload_ftp_file(ftp, upload_root, file_path, relative_path)
                     uploaded_files.append(relative_path)
                 except Exception as exc:
                     errors.append(f"{relative_path}: {exc}")
@@ -933,7 +932,7 @@ def normalize_ftp_host(ftp_host):
 def index_ftp_data_files(ftp, remote_root):
     files = {}
     folders = set()
-    remote_root = remote_root or "/"
+    remote_root = remote_root or "."
     try:
         index_ftp_directory(ftp, remote_root, "", files, folders)
     except Exception:
@@ -974,7 +973,42 @@ def join_remote_path(parent, child):
     return posixpath.join(parent, child)
 
 
-def ensure_ftp_directory(ftp, remote_directory):
+def enter_ftp_upload_root(ftp, ftp_folder):
+    ftp_folder = (ftp_folder or "").strip()
+    if not ftp_folder:
+        return get_ftp_current_directory(ftp)
+
+    candidates = [ftp_folder]
+    stripped_folder = ftp_folder.strip("/")
+    if stripped_folder and stripped_folder != ftp_folder:
+        candidates.append(stripped_folder)
+    basename = posixpath.basename(stripped_folder)
+    if basename and basename not in candidates:
+        candidates.append(basename)
+
+    for candidate in candidates:
+        try:
+            ftp.cwd(candidate)
+            return get_ftp_current_directory(ftp)
+        except error_perm:
+            continue
+
+    return get_ftp_current_directory(ftp)
+
+
+def get_ftp_current_directory(ftp):
+    try:
+        return ftp.pwd()
+    except Exception:
+        return "."
+
+
+def ensure_ftp_directory(ftp, remote_directory, root_directory=None):
+    if root_directory:
+        try:
+            ftp.cwd(root_directory)
+        except error_perm:
+            pass
     if not remote_directory:
         return
     parts = [part for part in remote_directory.split("/") if part]
@@ -988,16 +1022,69 @@ def ensure_ftp_directory(ftp, remote_directory):
         try:
             ftp.cwd(part)
         except error_perm:
-            ftp.mkd(part)
-            ftp.cwd(part)
+            try:
+                ftp.mkd(part)
+            except error_perm:
+                ftp.cwd(part)
+            else:
+                ftp.cwd(part)
 
 
-def upload_ftp_file(ftp, file_path, remote_path):
-    remote_directory = posixpath.dirname(remote_path)
-    remote_filename = posixpath.basename(remote_path)
-    ensure_ftp_directory(ftp, remote_directory)
+def upload_ftp_file(ftp, root_directory, file_path, relative_path):
+    remote_directory = posixpath.dirname(relative_path)
+    remote_filename = posixpath.basename(relative_path)
+    temporary_filename = get_temporary_ftp_filename(remote_filename)
+    try:
+        create_ftp_directory_path(ftp, root_directory, remote_directory)
+        ensure_ftp_directory(ftp, remote_directory, root_directory=root_directory)
+        with file_path.open("rb") as file_handle:
+            ftp.storbinary(f"STOR {temporary_filename}", file_handle)
+        ftp.rename(temporary_filename, remote_filename)
+    except error_perm:
+        upload_ftp_file_by_relative_path(ftp, root_directory, file_path, relative_path)
+
+
+def upload_ftp_file_by_relative_path(ftp, root_directory, file_path, relative_path):
+    temporary_relative_path = get_temporary_ftp_relative_path(relative_path)
+    if root_directory:
+        try:
+            ftp.cwd(root_directory)
+        except error_perm:
+            pass
     with file_path.open("rb") as file_handle:
-        ftp.storbinary(f"STOR {remote_filename}", file_handle)
+        ftp.storbinary(f"STOR {temporary_relative_path}", file_handle)
+    ftp.rename(temporary_relative_path, relative_path)
+
+
+def get_temporary_ftp_relative_path(relative_path):
+    remote_directory = posixpath.dirname(relative_path)
+    remote_filename = posixpath.basename(relative_path)
+    temporary_filename = get_temporary_ftp_filename(remote_filename)
+    if not remote_directory:
+        return temporary_filename
+    return posixpath.join(remote_directory, temporary_filename)
+
+
+def get_temporary_ftp_filename(filename):
+    return f".ftp_{filename}"
+
+
+def create_ftp_directory_path(ftp, root_directory, remote_directory):
+    if not remote_directory:
+        return
+    if root_directory:
+        try:
+            ftp.cwd(root_directory)
+        except error_perm:
+            pass
+
+    current_path = ""
+    for part in [part for part in remote_directory.split("/") if part]:
+        current_path = join_relative_path(current_path, part)
+        try:
+            ftp.mkd(current_path)
+        except error_perm:
+            pass
 
 
 def get_response_payload(response):

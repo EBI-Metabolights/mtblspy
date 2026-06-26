@@ -174,13 +174,12 @@ Download an ISA-Tab metadata file template:
 
 ```bash
 mtbls submission templates isa-tab-file assay \
-  --template-name MS \
-  --version 1.0 \
+  --template-name LC-MS \
   --target-path ./metadata \
   --mtbls-validation-endpoint https://www.ebi.ac.uk/metabolights/ws3
 ```
 
-Allowed ISA-Tab file types are `assay`, `sample`, and `investigation`.
+Allowed ISA-Tab file types are `assay`, `sample`, and `investigation`. For assay templates, use configured template names such as `LC-MS`, `GC-MS`, or `NMR`. `--version` is optional; if a versioned request fails with a server error, mtblspy retries once without the version.
 
 Download a result file template:
 
@@ -188,12 +187,11 @@ Download a result file template:
 mtbls submission templates result-file \
   --file-type maf \
   --template-name MS \
-  --version 1.0 \
   --target-path ./metadata \
   --mtbls-validation-endpoint https://www.ebi.ac.uk/metabolights/ws3
 ```
 
-The default result `--file-type` is `maf`, which maps to assignment output. Template downloads use `/public/v2/submission/file-template` on the configured validation endpoint. Existing target files are not overwritten unless `--override-current` is set.
+The default result `--file-type` is `maf`; mtblspy sends this to the API as `assignment`. Template downloads use `/public/v2/submission/file-template` on the configured validation endpoint. Existing target files are not overwritten unless `--override-current` is set.
 
 Edit the JSON file before creating the study. At minimum, review the title, description, study categories, contacts, publications, funding, descriptors, and agreement fields.
 
@@ -340,35 +338,159 @@ It writes two useful JSON files:
 | Validation input JSON | Local study model sent to OPA |
 | Validation report JSON | Status, full validation result, non-overridden errors, and overrides |
 
+### Local OPA bundle validation
+
+Local validation uses the OPA bundle workflow by default. It requires the `opa` executable to be available on `PATH`, or passed with `--opa-executable-path`.
+
+Check OPA:
+
+```bash
+opa version
+```
+
+Run local validation with the default OPA bundle:
+
+```bash
+mtbls submission validate MTBLS123 \
+  --metadata-files-path ./metadata/MTBLS123 \
+  --data-files-root-path ./data \
+  --validation-input-path ./reports/MTBLS123_validation_input.json \
+  -o ./reports/MTBLS123_validation_report.json
+```
+
 By default, the command uses `./bundle.tar.gz` and downloads the latest validation bundle from:
 
 ```text
 https://ebi-metabolights.github.io/mtbls-validation/bundle.tar.gz
 ```
 
-Use a specific bundle:
+Use a specific local OPA bundle:
 
 ```bash
 mtbls submission validate MTBLS123 \
+  --metadata-files-path ./metadata/MTBLS123 \
   --data-files-root-path ./data \
-  --validation-bundle-path ./bundle.tar.gz
+  --validation-bundle-path ./bundle.tar.gz \
+  -o ./reports/MTBLS123_validation_report.json
 ```
 
 Force a fresh bundle download:
 
 ```bash
 mtbls submission validate MTBLS123 \
+  --metadata-files-path ./metadata/MTBLS123 \
   --data-files-root-path ./data \
-  --refetch-validation-bundle
+  --refetch-validation-bundle \
+  -o ./reports/MTBLS123_validation_report.json
 ```
 
-Use WASM validation instead of the OPA bundle:
+### Local WASM validation
+
+Use `--mtbls-validation-wasm-path` or `--mtbls-validation-wasm-url` to run local validation with a WASM artifact instead of the default OPA bundle.
+
+Two artifact types are supported:
+
+| Artifact | Runtime requirement |
+| --- | --- |
+| Standalone WebAssembly binary | `wasmtime` executable |
+| OPA WASM bundle, such as `mtbls-validation.wasm` containing `policy.wasm` and `.manifest` | OPA executable with WebAssembly support |
+
+Install `wasmtime` only if you are using a standalone WebAssembly binary:
+
+```bash
+brew install wasmtime
+wasmtime --version
+```
+
+For an OPA WASM bundle, install an official OPA binary with WebAssembly support. Homebrew OPA may report `WebAssembly: unavailable`; in that case use the official binary below.
+
+Install on macOS Apple Silicon:
+
+```bash
+mkdir -p ~/bin
+curl -L -o ~/bin/opa-wasm https://openpolicyagent.org/downloads/latest/opa_darwin_arm64
+chmod 755 ~/bin/opa-wasm
+~/bin/opa-wasm version
+```
+
+For Intel macOS, use this download URL instead:
+
+```bash
+mkdir -p ~/bin
+curl -L -o ~/bin/opa-wasm https://openpolicyagent.org/downloads/latest/opa_darwin_amd64
+chmod 755 ~/bin/opa-wasm
+~/bin/opa-wasm version
+```
+
+Install on Linux x86_64:
+
+```bash
+mkdir -p ~/bin
+curl -L -o ~/bin/opa-wasm https://openpolicyagent.org/downloads/latest/opa_linux_amd64_static
+chmod 755 ~/bin/opa-wasm
+~/bin/opa-wasm version
+```
+
+Install on Linux ARM64:
+
+```bash
+mkdir -p ~/bin
+curl -L -o ~/bin/opa-wasm https://openpolicyagent.org/downloads/latest/opa_linux_arm64_static
+chmod 755 ~/bin/opa-wasm
+~/bin/opa-wasm version
+```
+
+Install on Windows x86_64 with PowerShell:
+
+```powershell
+New-Item -ItemType Directory -Force "$env:USERPROFILE\bin"
+Invoke-WebRequest -Uri "https://openpolicyagent.org/downloads/latest/opa_windows_amd64.exe" -OutFile "$env:USERPROFILE\bin\opa-wasm.exe"
+& "$env:USERPROFILE\bin\opa-wasm.exe" version
+```
+
+The version output must include:
+
+```text
+WebAssembly: available
+```
+
+Run local validation with an OPA WASM bundle:
 
 ```bash
 mtbls submission validate MTBLS123 \
+  --metadata-files-path ./metadata/MTBLS123 \
   --data-files-root-path ./data \
-  --mtbls-validation-wasm-path ./validation.wasm
+  --mtbls-validation-wasm-path ./mtbls-validation.wasm \
+  --opa-executable-path ~/bin/opa-wasm \
+  --validation-input-path ./reports/MTBLS123_validation_input.json \
+  -o ./reports/MTBLS123_validation_report.json
 ```
+
+On Windows, use the downloaded executable path:
+
+```powershell
+mtbls submission validate MTBLS123 `
+  --metadata-files-path .\metadata\MTBLS123 `
+  --data-files-root-path .\data `
+  --mtbls-validation-wasm-path .\mtbls-validation.wasm `
+  --opa-executable-path "$env:USERPROFILE\bin\opa-wasm.exe" `
+  --validation-input-path .\reports\MTBLS123_validation_input.json `
+  -o .\reports\MTBLS123_validation_report.json
+```
+
+Run local validation by downloading the OPA WASM bundle from a URL:
+
+```bash
+mtbls submission validate MTBLS123 \
+  --metadata-files-path ./metadata/MTBLS123 \
+  --data-files-root-path ./data \
+  --mtbls-validation-wasm-url https://ebi-metabolights.github.io/mtbls-validation/mtbls-validation.wasm \
+  --opa-executable-path ~/bin/opa-wasm \
+  --validation-input-path ./reports/MTBLS123_validation_input.json \
+  -o ./reports/MTBLS123_validation_report.json
+```
+
+If OPA reports `WebAssembly: unavailable`, `engine not found`, or `wasm target not supported`, run without `--mtbls-validation-wasm-path` or `--mtbls-validation-wasm-url` to use the default local OPA bundle workflow.
 
 Ignore specific validation rule IDs or metadata files with a text file:
 
@@ -477,6 +599,8 @@ mtbls submission upload-data MTBLS123 --data-files-root-path ./data -o data_uplo
 ```
 
 Before uploading, the command indexes the study FTP folder and skips local files already present remotely with the same relative path and file size.
+
+Each data file is uploaded to a temporary hidden FTP name first, using the prefix `.ftp_`. After the transfer completes, mtblspy renames it to the final file name. If an upload is interrupted before the rename, the remaining `.ftp_...` file on the FTP server indicates an incomplete upload.
 
 ### 8. Compress Agilent `.d` Data Folders
 

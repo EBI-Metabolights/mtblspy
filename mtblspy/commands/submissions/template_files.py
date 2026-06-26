@@ -115,11 +115,15 @@ def download_template_file(
     mtbls_validation_endpoint=DEFAULT_TEMPLATE_ENDPOINT,
 ):
     url = build_file_template_url(mtbls_validation_endpoint)
-    params = build_file_template_params(file_type, template_name, version)
+    api_file_type = normalize_template_file_type(file_type)
+    params = build_file_template_params(api_file_type, template_name, version)
     response = requests.get(url, params=params, timeout=60)
-    response.raise_for_status()
+    if should_retry_without_version(response, params):
+        params = build_file_template_params(api_file_type, template_name, None)
+        response = requests.get(url, params=params, timeout=60)
+    raise_for_template_response_error(response, params)
 
-    filename = get_response_filename(response) or default_template_filename(file_type, template_name)
+    filename = get_response_filename(response) or default_template_filename(api_file_type, template_name)
     output_path = resolve_template_output_path(target_path, filename)
     if output_path.exists() and not override_current:
         raise SubmissionAPIError(f"Template file already exists: {output_path}")
@@ -127,6 +131,28 @@ def download_template_file(
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_bytes(response.content)
     return output_path
+
+
+def normalize_template_file_type(file_type):
+    if str(file_type).lower() == "maf":
+        return "assignment"
+    return file_type
+
+
+def raise_for_template_response_error(response, params):
+    try:
+        response.raise_for_status()
+    except requests.HTTPError as exc:
+        hint = ""
+        if params.get("file_type") == "assay":
+            hint = " For assay templates, try template names such as LC-MS, GC-MS, or NMR."
+        if params.get("file_type") == "assignment":
+            hint = " For MAF/result templates, mtblspy sends file_type=assignment to the API."
+        raise SubmissionAPIError(f"{exc}.{hint}") from exc
+
+
+def should_retry_without_version(response, params):
+    return response.status_code >= 500 and bool(params.get("version"))
 
 
 def build_file_template_url(mtbls_validation_endpoint):
@@ -171,7 +197,7 @@ def default_template_filename(file_type, template_name=None):
 
 
 def default_template_suffix(file_type):
-    if file_type == "maf":
+    if file_type in {"maf", "assignment"}:
         return ".tsv"
     if file_type in {"assay", "sample", "investigation"}:
         return ".txt"

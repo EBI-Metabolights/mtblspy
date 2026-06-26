@@ -49,12 +49,15 @@ from mtblspy.commands.submissions.local_validation import (
 @click.option(
     "--mtbls-validation-wasm-path",
     type=click.Path(dir_okay=False),
-    help="Local MetaboLights validation WASM path. When set, local validation uses WASM instead of the OPA bundle.",
+    help=(
+        "Local MetaboLights standalone WASM or OPA WASM bundle path. "
+        "OPA WASM bundles require an OPA executable with WebAssembly support."
+    ),
 )
 @click.option(
     "--mtbls-validation-wasm-url",
     type=str,
-    help="URL used to download the validation WASM when the local WASM path is missing.",
+    help="URL used to download the validation standalone WASM or OPA WASM bundle when the local WASM path is missing.",
 )
 @click.option(
     "--mtbls-validation-endpoint",
@@ -86,7 +89,12 @@ from mtblspy.commands.submissions.local_validation import (
     default=False,
     help="Download the OPA validation bundle even if --validation-bundle-path already exists.",
 )
-@click.option("--opa-executable-path", default="opa", show_default=True, help="OPA executable path.")
+@click.option(
+    "--opa-executable-path",
+    default="opa",
+    show_default=True,
+    help="OPA executable path for default bundle validation and OPA WASM bundle validation.",
+)
 @click.option(
     "--validation-input-path",
     type=click.Path(dir_okay=False),

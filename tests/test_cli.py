@@ -268,6 +268,7 @@ def test_submission_templates_help_shows_child_command(runner):
 @patch("mtblspy.commands.submissions.template_files.requests.get")
 def test_submission_templates_isa_tab_file_downloads_template(mock_get, runner, tmp_path):
     response = MagicMock()
+    response.status_code = 200
     response.content = b"template-content"
     response.headers = {"Content-Disposition": 'attachment; filename="a_assay.txt"'}
     mock_get.return_value = response
@@ -280,7 +281,7 @@ def test_submission_templates_isa_tab_file_downloads_template(mock_get, runner, 
             "isa-tab-file",
             "assay",
             "--template-name",
-            "MS",
+            "LC-MS",
             "--version",
             "1.0",
             "--target-path",
@@ -294,7 +295,7 @@ def test_submission_templates_isa_tab_file_downloads_template(mock_get, runner, 
     assert (tmp_path / "a_assay.txt").read_bytes() == b"template-content"
     mock_get.assert_called_once_with(
         "https://wwwdev.ebi.ac.uk/metabolights/ws3/public/v2/submission/file-template",
-        params={"file_type": "assay", "template_name": "MS", "version": "1.0"},
+        params={"file_type": "assay", "template_name": "LC-MS", "version": "1.0"},
         timeout=60,
     )
 
@@ -304,6 +305,7 @@ def test_submission_templates_isa_tab_file_fails_when_target_exists_without_over
     target_file = tmp_path / "i_investigation.txt"
     target_file.write_text("existing", encoding="utf-8")
     response = MagicMock()
+    response.status_code = 200
     response.content = b"new-content"
     response.headers = {"Content-Disposition": 'attachment; filename="i_investigation.txt"'}
     mock_get.return_value = response
@@ -326,8 +328,53 @@ def test_submission_templates_isa_tab_file_fails_when_target_exists_without_over
 
 
 @patch("mtblspy.commands.submissions.template_files.requests.get")
+def test_submission_templates_isa_tab_file_retries_without_version_after_server_error(mock_get, runner, tmp_path):
+    failed_response = MagicMock()
+    failed_response.status_code = 500
+    failed_response.content = b'{"error_message":"UnboundLocalError"}'
+    failed_response.headers = {}
+
+    successful_response = MagicMock()
+    successful_response.status_code = 200
+    successful_response.content = b"template-content"
+    successful_response.headers = {"Content-Disposition": 'attachment; filename="a_assay.txt"'}
+    mock_get.side_effect = [failed_response, successful_response]
+
+    result = runner.invoke(
+        cli,
+        [
+            "submission",
+            "templates",
+            "isa-tab-file",
+            "assay",
+            "--template-name",
+            "LC-MS",
+            "--version",
+            "1.0",
+            "--target-path",
+            str(tmp_path),
+            "--mtbls-validation-endpoint",
+            "https://wwwdev.ebi.ac.uk/metabolights/ws3",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert (tmp_path / "a_assay.txt").read_bytes() == b"template-content"
+    assert mock_get.call_args_list[0].kwargs["params"] == {
+        "file_type": "assay",
+        "template_name": "LC-MS",
+        "version": "1.0",
+    }
+    assert mock_get.call_args_list[1].kwargs["params"] == {
+        "file_type": "assay",
+        "template_name": "LC-MS",
+    }
+
+
+@patch("mtblspy.commands.submissions.template_files.requests.get")
 def test_submission_templates_result_file_uses_default_maf_type(mock_get, runner, tmp_path):
     response = MagicMock()
+    response.status_code = 200
     response.content = b"maf-template"
     response.headers = {}
     mock_get.return_value = response
@@ -346,10 +393,10 @@ def test_submission_templates_result_file_uses_default_maf_type(mock_get, runner
     )
 
     assert result.exit_code == 0
-    assert (tmp_path / "maf_MS.tsv").read_bytes() == b"maf-template"
+    assert (tmp_path / "assignment_MS.tsv").read_bytes() == b"maf-template"
     mock_get.assert_called_once_with(
         "https://www.ebi.ac.uk/metabolights/ws3/public/v2/submission/file-template",
-        params={"file_type": "maf", "template_name": "MS"},
+        params={"file_type": "assignment", "template_name": "MS"},
         timeout=60,
     )
 

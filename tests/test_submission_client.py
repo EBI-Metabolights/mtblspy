@@ -1,4 +1,6 @@
 import json
+import posixpath
+from ftplib import error_perm
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -1146,6 +1148,7 @@ class FakeFTP:
         self.current_directory = "/"
         self.uploaded_paths = []
         self.created_directories = []
+        self.renamed_paths = []
         FakeFTP.instances.append(self)
 
     def login(self, user, password):
@@ -1159,6 +1162,9 @@ class FakeFTP:
             self.current_directory = path.rstrip("/") or "/"
         else:
             self.current_directory = f"{self.current_directory.rstrip('/')}/{path}".rstrip("/")
+
+    def pwd(self):
+        return self.current_directory
 
     def mkd(self, path):
         self.created_directories.append(path)
@@ -1178,6 +1184,17 @@ class FakeFTP:
         filename = command.removeprefix("STOR ")
         self.uploaded_paths.append(f"{self.current_directory.rstrip('/')}/{filename}")
         file_handle.read()
+
+    def rename(self, fromname, toname):
+        from_path = self.absolute_path(fromname)
+        to_path = self.absolute_path(toname)
+        self.renamed_paths.append((from_path, to_path))
+        self.uploaded_paths = [to_path if path == from_path else path for path in self.uploaded_paths]
+
+    def absolute_path(self, path):
+        if path.startswith("/"):
+            return path
+        return f"{self.current_directory.rstrip('/')}/{path}"
 
     def quit(self):
         self.closed = True
@@ -1222,6 +1239,12 @@ def test_upload_data_files_skips_remote_existing_files_and_deduplicates_selected
     assert result.skipped_files == ["folder1/file2.raw"]
     assert result.missing_on_local == []
     assert FakeFTP.instances[0].uploaded_paths == ["/incoming/MTBLS123/folder1/folder2/file1.raw"]
+    assert FakeFTP.instances[0].renamed_paths == [
+        (
+            "/incoming/MTBLS123/folder1/folder2/.ftp_file1.raw",
+            "/incoming/MTBLS123/folder1/folder2/file1.raw",
+        )
+    ]
 
 
 @patch("mtblspy.commands.submissions.client.get_base_url")
@@ -1242,3 +1265,162 @@ def test_upload_data_files_reports_missing_selected_files_without_ftp(
     assert result.uploaded_files == []
     assert result.missing_on_local == ["missing.raw"]
     assert FakeFTP.instances == []
+
+
+class LoginRootFTP(FakeFTP):
+    def __init__(self, host, timeout=60):
+        super().__init__(host, timeout=timeout)
+        self.current_directory = "/"
+
+    def cwd(self, path):
+        if path in ("/incoming/MTBLS123", "incoming/MTBLS123", "MTBLS123"):
+            raise error_perm("550 Failed to change directory.")
+        super().cwd(path)
+
+    def mlsd(self, path):
+        return []
+
+
+class NoSubdirectoryCwdFTP(LoginRootFTP):
+    def cwd(self, path):
+        if path in ("folder1", "folder2", "empty-folder"):
+            raise error_perm("550 Failed to change directory.")
+        super().cwd(path)
+
+    def storbinary(self, command, file_handle):
+        target = command.removeprefix("STOR ")
+        self.uploaded_paths.append(f"{self.current_directory.rstrip('/')}/{target}")
+        file_handle.read()
+
+
+class PathMkdOnlyFTP(NoSubdirectoryCwdFTP):
+    def __init__(self, host, timeout=60):
+        super().__init__(host, timeout=timeout)
+        self.allowed_store_paths = set()
+
+    def mkd(self, path):
+        super().mkd(path)
+        self.allowed_store_paths.add(path)
+
+    def storbinary(self, command, file_handle):
+        target = command.removeprefix("STOR ")
+        directory = posixpath.dirname(target)
+        if directory and directory not in self.allowed_store_paths:
+            raise error_perm("553 Could not create file.")
+        self.uploaded_paths.append(f"{self.current_directory.rstrip('/')}/{target}")
+        file_handle.read()
+
+
+@patch("mtblspy.commands.submissions.client.requests.get")
+@patch("mtblspy.commands.submissions.client.get_api_key")
+@patch("mtblspy.commands.submissions.client.get_base_url")
+def test_upload_data_files_uses_login_directory_when_ftp_folder_is_not_accessible(
+    mock_get_base_url,
+    mock_get_api_key,
+    mock_get,
+    tmp_path,
+):
+    FakeFTP.instances = []
+    mock_get_base_url.return_value = "https://wwwdev.ebi.ac.uk/metabolights/ws"
+    mock_get_api_key.return_value = "valid-key"
+    response = MagicMock()
+    response.json.return_value = {
+        "study_id": "MTBLS123",
+        "ftp_folder": "/incoming/MTBLS123",
+        "ftp_host": "ftp-private.ebi.ac.uk",
+        "ftp_user": "ftp-user",
+        "ftp_password": "ftp-password",
+    }
+    mock_get.return_value = response
+    data_file = tmp_path / "folder1" / "file1.raw"
+    data_file.parent.mkdir()
+    data_file.write_text("raw-data", encoding="utf-8")
+
+    result = SubmissionClient().upload_data_files(
+        "MTBLS123",
+        data_files_root_path=tmp_path,
+        ftp_factory=LoginRootFTP,
+    )
+
+    assert result.errors == []
+    assert result.uploaded_files == ["folder1/file1.raw"]
+    assert FakeFTP.instances[0].uploaded_paths == ["/folder1/file1.raw"]
+
+
+@patch("mtblspy.commands.submissions.client.requests.get")
+@patch("mtblspy.commands.submissions.client.get_api_key")
+@patch("mtblspy.commands.submissions.client.get_base_url")
+def test_upload_data_files_falls_back_to_path_based_store_when_cwd_to_subfolder_fails(
+    mock_get_base_url,
+    mock_get_api_key,
+    mock_get,
+    tmp_path,
+):
+    FakeFTP.instances = []
+    mock_get_base_url.return_value = "https://wwwdev.ebi.ac.uk/metabolights/ws"
+    mock_get_api_key.return_value = "valid-key"
+    response = MagicMock()
+    response.json.return_value = {
+        "study_id": "MTBLS123",
+        "ftp_folder": "/incoming/MTBLS123",
+        "ftp_host": "ftp-private.ebi.ac.uk",
+        "ftp_user": "ftp-user",
+        "ftp_password": "ftp-password",
+    }
+    mock_get.return_value = response
+    (tmp_path / "empty-folder").mkdir()
+    folder = tmp_path / "folder1"
+    folder.mkdir()
+    (folder / "file1.raw").write_text("raw-data", encoding="utf-8")
+
+    result = SubmissionClient().upload_data_files(
+        "MTBLS123",
+        data_files_root_path=tmp_path,
+        ftp_factory=NoSubdirectoryCwdFTP,
+    )
+
+    assert result.errors == []
+    assert result.uploaded_files == ["folder1/file1.raw"]
+    assert result.skipped_files == ["empty-folder/"]
+    assert FakeFTP.instances[0].uploaded_paths == ["/folder1/file1.raw"]
+
+
+@patch("mtblspy.commands.submissions.client.requests.get")
+@patch("mtblspy.commands.submissions.client.get_api_key")
+@patch("mtblspy.commands.submissions.client.get_base_url")
+def test_upload_data_files_creates_cumulative_directories_before_path_based_store(
+    mock_get_base_url,
+    mock_get_api_key,
+    mock_get,
+    tmp_path,
+):
+    FakeFTP.instances = []
+    mock_get_base_url.return_value = "https://wwwdev.ebi.ac.uk/metabolights/ws"
+    mock_get_api_key.return_value = "valid-key"
+    response = MagicMock()
+    response.json.return_value = {
+        "study_id": "MTBLS123",
+        "ftp_folder": "/incoming/MTBLS123",
+        "ftp_host": "ftp-private.ebi.ac.uk",
+        "ftp_user": "ftp-user",
+        "ftp_password": "ftp-password",
+    }
+    mock_get.return_value = response
+    data_file = tmp_path / "folder1" / "folder2" / "file1.raw"
+    data_file.parent.mkdir(parents=True)
+    data_file.write_text("raw-data", encoding="utf-8")
+
+    result = SubmissionClient().upload_data_files(
+        "MTBLS123",
+        data_files_root_path=tmp_path,
+        ftp_factory=PathMkdOnlyFTP,
+    )
+
+    assert result.errors == []
+    assert result.uploaded_files == ["folder1/folder2/file1.raw"]
+    assert "folder1" in FakeFTP.instances[0].created_directories
+    assert "folder1/folder2" in FakeFTP.instances[0].created_directories
+    assert FakeFTP.instances[0].uploaded_paths == ["/folder1/folder2/file1.raw"]
+    assert FakeFTP.instances[0].renamed_paths == [
+        ("/folder1/folder2/.ftp_file1.raw", "/folder1/folder2/file1.raw")
+    ]
