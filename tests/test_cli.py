@@ -8,10 +8,12 @@ from click.testing import CliRunner
 
 from mtblspy.commands.submissions.client import (
     DataUploadResult,
+    FtpTemporaryCleanupResult,
     MetadataUploadResult,
     ValidationResult,
     ValidationRootCauseResult,
 )
+from mtblspy.commands.submissions.exceptions import SubmissionAPIError
 from mtblspy.commands.submissions.local_validation import LocalValidationResult
 from mtblspy.commands.submissions.models import FtpUploadDetails
 from mtblspy.commands.cli import cli
@@ -478,8 +480,9 @@ def test_submission_upload_metadata_success(mock_client_cls, runner, tmp_path):
     payload = json.loads(result.output)
     assert payload["status"] == "success"
     assert payload["uploaded_files"] == ["i_Investigation.txt"]
-    assert payload["Skipped_files"] == ["s_MTBLS123.txt"]
-    assert payload["Message"] == "Uploaded 1 metadata file(s) for MTBLS123."
+    assert payload["skipped_files"] == ["s_MTBLS123.txt"]
+    assert payload["message"] == "Uploaded 1 metadata file(s) for MTBLS123."
+    assert "Message" not in payload
     client.upload_metadata.assert_called_once()
     assert client.upload_metadata.call_args.args == ("MTBLS123",)
     assert client.upload_metadata.call_args.kwargs["metadata_path"] == str(tmp_path)
@@ -530,6 +533,41 @@ def test_submission_upload_metadata_writes_json_output(mock_client_cls, runner, 
     mock_client_cls.assert_called_once_with(base_url="https://upload.example/metabolights/ws")
 
 
+@patch("mtblspy.commands.submissions.submission_upload_metadata.SubmissionClient")
+def test_submission_upload_metadata_failure_prints_readable_errors(mock_client_cls, runner, tmp_path):
+    client = MagicMock()
+    client.rest_api_base_url = "https://www.ebi.ac.uk/metabolights/ws"
+    client.upload_metadata.side_effect = SubmissionAPIError(
+        "Metadata upload failed for 2 file(s).",
+        errors=[
+            "i_Investigation.txt: HTTP 400 - There is no study.",
+            "s_MTBLS123.txt: HTTP 400 - There is no study.",
+        ],
+    )
+    mock_client_cls.return_value = client
+
+    result = runner.invoke(
+        cli,
+        [
+            "submission",
+            "metadata-upload",
+            "MTBLS123",
+            "--metadata-files-path",
+            str(tmp_path),
+        ],
+    )
+
+    assert result.exit_code == 1
+    payload = json.loads(result.output)
+    assert payload["status"] == "failed"
+    assert payload["message"] == "Metadata upload failed for 2 file(s)."
+    assert payload["errors"] == [
+        "i_Investigation.txt: HTTP 400 - There is no study.",
+        "s_MTBLS123.txt: HTTP 400 - There is no study.",
+    ]
+    assert '{"content":null' not in result.output
+
+
 @patch("mtblspy.commands.submissions.submission_upload_data.SubmissionClient")
 def test_submission_upload_data_success(mock_client_cls, runner, tmp_path):
     client = MagicMock()
@@ -563,8 +601,9 @@ def test_submission_upload_data_success(mock_client_cls, runner, tmp_path):
     payload = json.loads(result.output)
     assert payload["status"] == "success"
     assert payload["uploaded_files"] == ["folder1/file1.raw"]
-    assert payload["Skipped_files"] == ["folder1/file2.raw"]
+    assert payload["skipped_files"] == ["folder1/file2.raw"]
     assert payload["missing_on_local"] == []
+    assert "Message" not in payload
     client.upload_data_files.assert_called_once_with(
         "MTBLS123",
         data_files_root_path=str(tmp_path),
@@ -615,6 +654,29 @@ def test_submission_upload_data_writes_json_output(mock_client_cls, runner, tmp_
     mock_client_cls.assert_called_once_with(base_url="https://upload.example/metabolights/ws")
 
 
+@patch("mtblspy.commands.submissions.submission_clean_ftp_temp_files.SubmissionClient")
+def test_submission_clean_ftp_temp_files_success(mock_client_cls, runner):
+    client = MagicMock()
+    client.rest_api_base_url = "https://www.ebi.ac.uk/metabolights/ws"
+    client.clear_ftp_temporary_files.return_value = FtpTemporaryCleanupResult(
+        study_id="MTBLS123",
+        deleted_files=[".ftp_file1.raw", "folder1/.ftp_file2.raw"],
+        errors=[],
+    )
+    mock_client_cls.return_value = client
+
+    result = runner.invoke(cli, ["submission", "clean-ftp-temp-files", "MTBLS123"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["status"] == "success"
+    assert payload["deleted_files"] == [".ftp_file1.raw", "folder1/.ftp_file2.raw"]
+    assert payload["errors"] == []
+    assert payload["message"] == "Deleted 2 FTP temporary file(s) for MTBLS123."
+    assert "Message" not in payload
+    client.clear_ftp_temporary_files.assert_called_once_with("MTBLS123")
+
+
 @patch("mtblspy.commands.submissions.submission_validate.SubmissionClient")
 def test_submission_validate_remote_prints_json_report(mock_client_cls, runner, tmp_path):
     report_path = tmp_path / "validation-report.json"
@@ -634,8 +696,6 @@ def test_submission_validate_remote_prints_json_report(mock_client_cls, runner, 
             "submission",
             "validate",
             "MTBLS123",
-            "--data-files-root-path",
-            str(tmp_path),
             "--remote-validation",
             "--validation-file-path",
             str(report_path),
@@ -661,6 +721,14 @@ def test_submission_help_shows_validate_without_validate_local(runner):
     assert "compress-data-files" in result.output
     assert "validate" in result.output
     assert "validate-local" not in result.output
+    assert "validation-debug" not in result.output
+
+
+def test_submission_validate_requires_data_files_root_for_local_validation(runner):
+    result = runner.invoke(cli, ["submission", "validate", "MTBLS123"])
+
+    assert result.exit_code == 1
+    assert "--data-files-root-path is required unless --remote-validation is used." in result.output
 
 
 def test_submission_compress_data_files_zips_dot_d_and_updates_metadata(runner, tmp_path):
@@ -819,7 +887,6 @@ def test_submission_validation_debug_command(mock_client_cls, runner, tmp_path):
     )
     mock_client_cls.return_value = client
 
-    help_result = runner.invoke(cli, ["submission", "--help"])
     result = runner.invoke(
         cli,
         [
@@ -833,10 +900,8 @@ def test_submission_validation_debug_command(mock_client_cls, runner, tmp_path):
             "--remote-validation-file-path",
             str(remote_report_path),
         ],
-    )
+        )
 
-    assert help_result.exit_code == 0
-    assert "validation-debug" in help_result.output
     assert result.exit_code == 0
     assert "Remote validation completed with 1 error(s)." in result.output
     assert "Raw data file 'missing.raw' is referenced but was not found." in result.output

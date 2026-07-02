@@ -36,9 +36,8 @@ from mtblspy.commands.submissions.local_validation import (
 )
 @click.option(
     "--data-files-root-path",
-    required=True,
     type=click.Path(exists=False, file_okay=False),
-    help="Root path of data files used by local validation.",
+    help="Root path of data files used by local validation. Required unless --remote-validation is used.",
 )
 @click.option(
     "--remote-validation",
@@ -166,6 +165,10 @@ def validate_submission(
                 poll_interval,
             )
         else:
+            if not data_files_root_path:
+                raise click.ClickException(
+                    "--data-files-root-path is required unless --remote-validation is used."
+                )
             result = run_default_local_validation(
                 study_id,
                 default_submission_data_path,

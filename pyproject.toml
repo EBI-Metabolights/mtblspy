@@ -10,6 +10,7 @@ dependencies = [
     "pydantic>=2.6.1",
     "pydantic-settings>=2.1.0",
     "keyring>=25.0.0",
+    "tqdm>=4.66.0",
 ]
 
 [project.scripts]
