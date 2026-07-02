@@ -22,7 +22,11 @@ from mtblspy.commands.submissions.local_validation import (
 )
 
 
-@click.command(name="validation-debug", short_help="Create remote/local validation root-cause report.")
+@click.command(
+    name="validation-debug",
+    hidden=True,
+    short_help="Developer-only remote/local validation root-cause report.",
+)
 @click.argument("study_id")
 @click.option(
     "--metadata-path",

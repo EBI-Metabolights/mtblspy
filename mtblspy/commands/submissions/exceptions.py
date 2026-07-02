@@ -9,3 +9,6 @@ class AuthenticationError(SubmissionError):
 class SubmissionAPIError(SubmissionError):
     """Raised when the MetaboLights API returns an error payload."""
 
+    def __init__(self, message, errors=None):
+        super().__init__(message)
+        self.errors = list(errors or [])

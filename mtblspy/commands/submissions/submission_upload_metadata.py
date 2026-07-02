@@ -72,7 +72,7 @@ def upload_metadata(
         )
     except SubmissionError as exc:
         resolved_endpoint = client.rest_api_base_url if "client" in locals() else normalized_endpoint
-        write_failure_output(
+        payload = write_failure_output(
             study_id=normalized_study_id,
             default_submission_data_path=default_submission_data_path,
             metadata_files_path=metadata_path,
@@ -80,11 +80,13 @@ def upload_metadata(
             selected_files=selected_file_names,
             output=output,
             message=str(exc),
+            errors=get_exception_errors(exc),
         )
-        raise click.ClickException(str(exc)) from exc
+        click.echo(json.dumps(payload, indent=2))
+        raise click.exceptions.Exit(1) from exc
     except Exception as exc:
         resolved_endpoint = client.rest_api_base_url if "client" in locals() else normalized_endpoint
-        write_failure_output(
+        payload = write_failure_output(
             study_id=normalized_study_id,
             default_submission_data_path=default_submission_data_path,
             metadata_files_path=metadata_path,
@@ -92,8 +94,10 @@ def upload_metadata(
             selected_files=selected_file_names,
             output=output,
             message=str(exc),
+            errors=get_exception_errors(exc),
         )
-        raise click.ClickException(str(exc)) from exc
+        click.echo(json.dumps(payload, indent=2))
+        raise click.exceptions.Exit(1) from exc
 
     payload = build_upload_metadata_payload(
         study_id=result.study_id,
@@ -106,6 +110,7 @@ def upload_metadata(
         uploaded_files=[file_path.name for file_path in result.uploaded_files],
         skipped_files=[file_path.name for file_path in result.skipped_files],
         message=f"Uploaded {len(result.uploaded_files)} metadata file(s) for {result.study_id}.",
+        errors=[],
     )
 
     if output:
@@ -137,7 +142,9 @@ def build_upload_metadata_payload(
     uploaded_files,
     skipped_files,
     message,
+    errors=None,
 ):
+    errors = list(errors or [])
     return {
         "parameters": [
             {"name": "study_id", "value": study_id},
@@ -149,8 +156,9 @@ def build_upload_metadata_payload(
         ],
         "status": status,
         "uploaded_files": uploaded_files,
-        "Skipped_files": skipped_files,
-        "Message": message,
+        "skipped_files": skipped_files,
+        "message": message,
+        "errors": errors,
     }
 
 
@@ -172,9 +180,8 @@ def write_failure_output(
     selected_files,
     output,
     message,
+    errors=None,
 ):
-    if not output:
-        return
     payload = build_upload_metadata_payload(
         study_id=study_id,
         default_submission_data_path=default_submission_data_path,
@@ -186,6 +193,13 @@ def write_failure_output(
         uploaded_files=[],
         skipped_files=[],
         message=message,
+        errors=errors or [message],
     )
-    output_path = save_metadata_upload_output(payload, output, study_id)
-    click.echo(f"Metadata upload JSON saved to {output_path}")
+    if output:
+        output_path = save_metadata_upload_output(payload, output, study_id)
+        click.echo(f"Metadata upload JSON saved to {output_path}")
+    return payload
+
+
+def get_exception_errors(exc):
+    return getattr(exc, "errors", None) or [str(exc)]

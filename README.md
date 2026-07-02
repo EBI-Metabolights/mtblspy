@@ -8,6 +8,8 @@ The installed command is:
 mtbls
 ```
 
+For a workflow-oriented command guide with required arguments, option tables, minimum and advanced scenarios, and example outputs, see [MetaboLights Submission Workflow Guide](docs/submission_workflow_guide.md).
+
 ## What It Does
 
 `mtblspy` focuses on the private submission workflow for MetaboLights:
@@ -511,7 +513,6 @@ Run remote validation through the MetaboLights submission API:
 
 ```bash
 mtbls submission validate MTBLS123 \
-  --data-files-root-path ./data \
   --remote-validation
 ```
 
@@ -519,7 +520,6 @@ Override the configured submission and validation endpoints for remote validatio
 
 ```bash
 mtbls submission validate MTBLS123 \
-  --data-files-root-path ./data \
   --remote-validation \
   --mtbls-submission-endpoint https://www.ebi.ac.uk/metabolights/ws \
   --mtbls-validation-endpoint https://www.ebi.ac.uk/metabolights/ws3
@@ -529,7 +529,6 @@ Control remote polling:
 
 ```bash
 mtbls submission validate MTBLS123 \
-  --data-files-root-path ./data \
   --remote-validation \
   --max-polls 180 \
   --poll-interval 10 \
@@ -598,9 +597,27 @@ Save upload options and results:
 mtbls submission upload-data MTBLS123 --data-files-root-path ./data -o data_upload_response.json
 ```
 
+When running in an interactive terminal, `upload-data` shows an item progress bar on stderr while files and empty folders are processed. This keeps the final JSON response on stdout clean for scripts and pipelines. Disable the progress bar with:
+
+```bash
+mtbls submission upload-data MTBLS123 --data-files-root-path ./data --no-progress
+```
+
 Before uploading, the command indexes the study FTP folder and skips local files already present remotely with the same relative path and file size.
 
-Each data file is uploaded to a temporary hidden FTP name first, using the prefix `.ftp_`. After the transfer completes, mtblspy renames it to the final file name. If an upload is interrupted before the rename, the remaining `.ftp_...` file on the FTP server indicates an incomplete upload.
+Each data file is uploaded to a temporary hidden FTP name first, using the prefix `.ftp_`. After the transfer completes, mtblspy checks the uploaded temporary file size when the FTP server reports it. If the temporary size differs from the local file size, the upload result is marked as failed and the temporary file is deleted instead of being renamed. If the size matches, mtblspy renames the temporary file to the final file name.
+
+If an upload is interrupted before the rename, the remaining `.ftp_...` file on the FTP server indicates an incomplete upload. Clean those temporary files with:
+
+```bash
+mtbls submission clean-ftp-temp-files MTBLS123
+```
+
+Save cleanup options and results:
+
+```bash
+mtbls submission clean-ftp-temp-files MTBLS123 -o clean_ftp_temp_files_response.json
+```
 
 ### 8. Compress Agilent `.d` Data Folders
 
@@ -691,10 +708,11 @@ mtbls --help
 | `mtbls submission list` | List studies created by the authenticated user |
 | `mtbls submission create` | Create a provisional study from a JSON input file |
 | `mtbls submission ftp-credentials STUDY_ID` | Get private FTP upload credentials |
+| `mtbls submission clean-ftp-temp-files STUDY_ID` | Delete incomplete `.ftp_` files from the private FTP area |
 | `mtbls submission upload-data STUDY_ID --data-files-root-path PATH` | Upload data files to the private FTP area |
 | `mtbls submission metadata-upload STUDY_ID` | Upload ISA-Tab metadata files |
 | `mtbls submission compress-data-files STUDY_ID` | Compress local `.d` data folders to `.d.zip` files |
-| `mtbls submission validate STUDY_ID --data-files-root-path PATH` | Run local validation with OPA by default, or remote validation with `--remote-validation` |
+| `mtbls submission validate STUDY_ID --data-files-root-path PATH` | Run local validation with OPA by default. Use `--remote-validation` to validate remotely without a local data path |
 | `mtbls submission templates study-creation-input` | Generate a study creation JSON template |
 | `mtbls submission templates isa-tab-file FILE_TYPE` | Download an ISA-Tab metadata file template |
 | `mtbls submission templates result-file` | Download a result file template |
@@ -730,8 +748,9 @@ Use `-h` or `--help` with any command to see the same options in the terminal.
 | `mtbls submission list` | None | `-o`, `--output` |
 | `mtbls submission create` | None | `--input-file`, `--input-format`, `-o`, `--output` |
 | `mtbls submission ftp-credentials` | `STUDY_ID` | `-o`, `--output` |
+| `mtbls submission clean-ftp-temp-files` | `STUDY_ID` | `--mtbls-submission-endpoint`, `-o`, `--output` |
 | `mtbls submission metadata-upload` | `STUDY_ID` | `--default-submission-data-path`, `-p`, `--metadata-files-path`, `--metadata-path`, `--mtbls-submission-endpoint`, `--selected-files`, `-o`, `--output` |
-| `mtbls submission upload-data` | `STUDY_ID` | `--data-files-root-path`, `--selected-files`, `--skip-uploaded-files`, `--skip-empty-folders`, `--mtbls-submission-endpoint`, `-o`, `--output` |
+| `mtbls submission upload-data` | `STUDY_ID` | `--data-files-root-path`, `--selected-files`, `--skip-uploaded-files`, `--skip-empty-folders`, `--mtbls-submission-endpoint`, `-o`, `--output`, `--progress`, `--no-progress` |
 | `mtbls submission validate` | `STUDY_ID` | `--default-submission-data-path`, `-p`, `--metadata-files-path`, `--metadata-path`, `--data-files-root-path`, `--remote-validation`, `--mtbls-validation-wasm-path`, `--mtbls-validation-wasm-url`, `--mtbls-validation-endpoint`, `--mtbls-submission-endpoint`, `--validation-bundle-path`, `--mtbls-validation-bundle-path`, `--validation-bundle-url`, `--mtbls-validation-bundle-url`, `--refetch-validation-bundle`, `--opa-executable-path`, `--validation-input-path`, `--config-file`, `--overridden-rules-file-path`, `--max-polls`, `--poll-interval`, `--timeout`, `-o`, `-v`, `--output`, `--validation-file-path`, `--validation_file_path`, `--output-format` |
 | `mtbls submission compress-data-files` | `STUDY_ID` | `-p`, `--study-path`, `--files-path`, `--metadata-path`, `--overwrite`, `--no-overwrite`, `--update-metadata`, `--no-update-metadata`, `--remove-original` |
 | `mtbls submission templates study-creation-input` | None | `-o`, `--output`, `--data-folder`, `--overwrite`, `--no-overwrite` |
@@ -826,7 +845,6 @@ Increase polling limits:
 
 ```bash
 mtbls submission validate MTBLS123 \
-  --data-files-root-path ./data \
   --remote-validation \
   --max-polls 240 \
   --poll-interval 10

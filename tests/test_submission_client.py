@@ -1139,6 +1139,40 @@ def test_upload_metadata_uploads_selected_files_and_reports_skipped_files(
     ]
 
 
+@patch("mtblspy.commands.submissions.client.requests.post")
+@patch("mtblspy.commands.submissions.client.get_api_key")
+@patch("mtblspy.commands.submissions.client.get_base_url")
+def test_upload_metadata_formats_api_errors_readably(
+    mock_get_base_url,
+    mock_get_api_key,
+    mock_post,
+    tmp_path,
+):
+    mock_get_base_url.return_value = "https://wwwdev.ebi.ac.uk/metabolights/ws"
+    mock_get_api_key.return_value = "valid-key"
+    (tmp_path / "i_Investigation.txt").write_text("investigation", encoding="utf-8")
+    (tmp_path / "s_MTBLS123.txt").write_text("samples", encoding="utf-8")
+
+    response = MagicMock()
+    response.status_code = 400
+    response.content = b'{"content":null,"err":"MetabolightsException: There is no study., http_code: 400","message":"There is no study."}'
+    response.json.return_value = {
+        "content": None,
+        "err": "MetabolightsException: There is no study., http_code: 400",
+        "message": "There is no study.",
+    }
+    mock_post.return_value = response
+
+    with pytest.raises(SubmissionAPIError) as exc_info:
+        SubmissionClient().upload_metadata("MTBLS123", metadata_path=tmp_path)
+
+    assert str(exc_info.value) == "Metadata upload failed for 2 file(s)."
+    assert exc_info.value.errors == [
+        "i_Investigation.txt: HTTP 400 - There is no study.",
+        "s_MTBLS123.txt: HTTP 400 - There is no study.",
+    ]
+
+
 class FakeFTP:
     instances = []
 
@@ -1149,6 +1183,7 @@ class FakeFTP:
         self.uploaded_paths = []
         self.created_directories = []
         self.renamed_paths = []
+        self.deleted_paths = []
         FakeFTP.instances.append(self)
 
     def login(self, user, password):
@@ -1190,6 +1225,11 @@ class FakeFTP:
         to_path = self.absolute_path(toname)
         self.renamed_paths.append((from_path, to_path))
         self.uploaded_paths = [to_path if path == from_path else path for path in self.uploaded_paths]
+
+    def delete(self, path):
+        absolute_path = self.absolute_path(path)
+        self.deleted_paths.append(absolute_path)
+        self.uploaded_paths = [uploaded_path for uploaded_path in self.uploaded_paths if uploaded_path != absolute_path]
 
     def absolute_path(self, path):
         if path.startswith("/"):
@@ -1267,6 +1307,45 @@ def test_upload_data_files_reports_missing_selected_files_without_ftp(
     assert FakeFTP.instances == []
 
 
+@patch("mtblspy.commands.submissions.client.requests.get")
+@patch("mtblspy.commands.submissions.client.get_api_key")
+@patch("mtblspy.commands.submissions.client.get_base_url")
+def test_upload_data_files_emits_progress_events(
+    mock_get_base_url,
+    mock_get_api_key,
+    mock_get,
+    tmp_path,
+):
+    FakeFTP.instances = []
+    mock_get_base_url.return_value = "https://wwwdev.ebi.ac.uk/metabolights/ws"
+    mock_get_api_key.return_value = "valid-key"
+    response = MagicMock()
+    response.json.return_value = {
+        "study_id": "MTBLS123",
+        "ftp_folder": "/incoming/MTBLS123",
+        "ftp_host": "ftp-private.ebi.ac.uk",
+        "ftp_user": "ftp-user",
+        "ftp_password": "ftp-password",
+    }
+    mock_get.return_value = response
+    data_file = tmp_path / "file1.raw"
+    data_file.write_text("raw-data", encoding="utf-8")
+    progress_events = []
+
+    result = SubmissionClient().upload_data_files(
+        "MTBLS123",
+        data_files_root_path=tmp_path,
+        ftp_factory=FakeFTP,
+        progress_callback=progress_events.append,
+    )
+
+    assert result.uploaded_files == ["file1.raw"]
+    assert progress_events == [
+        {"event": "start", "total": 1},
+        {"event": "item", "path": "file1.raw", "status": "uploaded"},
+    ]
+
+
 class LoginRootFTP(FakeFTP):
     def __init__(self, host, timeout=60):
         super().__init__(host, timeout=timeout)
@@ -1309,6 +1388,72 @@ class PathMkdOnlyFTP(NoSubdirectoryCwdFTP):
             raise error_perm("553 Could not create file.")
         self.uploaded_paths.append(f"{self.current_directory.rstrip('/')}/{target}")
         file_handle.read()
+
+
+class SizeMismatchFTP(FakeFTP):
+    def __init__(self, host, timeout=60):
+        super().__init__(host, timeout=timeout)
+        self.uploaded_sizes = {}
+
+    def storbinary(self, command, file_handle):
+        filename = command.removeprefix("STOR ")
+        upload_path = f"{self.current_directory.rstrip('/')}/{filename}"
+        self.uploaded_paths.append(upload_path)
+        self.uploaded_sizes[upload_path] = len(file_handle.read())
+
+    def size(self, path):
+        upload_path = self.absolute_path(path)
+        uploaded_size = self.uploaded_sizes.get(upload_path)
+        if uploaded_size is None:
+            return None
+        return uploaded_size - 1
+
+
+class TemporaryFilesFTP(FakeFTP):
+    def mlsd(self, path):
+        entries = {
+            "/incoming/MTBLS123": [
+                (".ftp_root.raw", {"type": "file", "size": "1"}),
+                ("final.raw", {"type": "file", "size": "1"}),
+                ("folder1", {"type": "dir"}),
+            ],
+            "/incoming/MTBLS123/folder1": [
+                (".ftp_nested.raw", {"type": "file", "size": "2"}),
+                ("nested.raw", {"type": "file", "size": "2"}),
+            ],
+        }
+        return entries.get(path.rstrip("/"), [])
+
+
+class NlstOnlyTemporaryFilesFTP(TemporaryFilesFTP):
+    directories = {"/", "/incoming/MTBLS123", "/incoming/MTBLS123/folder1"}
+
+    def mlsd(self, path):
+        raise error_perm("500 Unknown command.")
+
+    def nlst(self, path):
+        entries = {
+            "/incoming/MTBLS123": [
+                "/incoming/MTBLS123/.ftp_root.raw",
+                "/incoming/MTBLS123/final.raw",
+                "/incoming/MTBLS123/folder1",
+            ],
+            "/incoming/MTBLS123/folder1": [
+                "/incoming/MTBLS123/folder1/.ftp_nested.raw",
+                "/incoming/MTBLS123/folder1/nested.raw",
+            ],
+        }
+        return entries.get(path.rstrip("/"), [])
+
+    def cwd(self, path):
+        if path == "/":
+            self.current_directory = "/"
+            return
+        absolute_path = path if path.startswith("/") else f"{self.current_directory.rstrip('/')}/{path}"
+        absolute_path = absolute_path.rstrip("/") or "/"
+        if absolute_path not in self.directories:
+            raise error_perm("550 Failed to change directory.")
+        self.current_directory = absolute_path
 
 
 @patch("mtblspy.commands.submissions.client.requests.get")
@@ -1423,4 +1568,109 @@ def test_upload_data_files_creates_cumulative_directories_before_path_based_stor
     assert FakeFTP.instances[0].uploaded_paths == ["/folder1/folder2/file1.raw"]
     assert FakeFTP.instances[0].renamed_paths == [
         ("/folder1/folder2/.ftp_file1.raw", "/folder1/folder2/file1.raw")
+    ]
+
+
+@patch("mtblspy.commands.submissions.client.requests.get")
+@patch("mtblspy.commands.submissions.client.get_api_key")
+@patch("mtblspy.commands.submissions.client.get_base_url")
+def test_upload_data_files_reports_temporary_file_size_mismatch(
+    mock_get_base_url,
+    mock_get_api_key,
+    mock_get,
+    tmp_path,
+):
+    FakeFTP.instances = []
+    mock_get_base_url.return_value = "https://wwwdev.ebi.ac.uk/metabolights/ws"
+    mock_get_api_key.return_value = "valid-key"
+    response = MagicMock()
+    response.json.return_value = {
+        "study_id": "MTBLS123",
+        "ftp_folder": "/incoming/MTBLS123",
+        "ftp_host": "ftp-private.ebi.ac.uk",
+        "ftp_user": "ftp-user",
+        "ftp_password": "ftp-password",
+    }
+    mock_get.return_value = response
+    data_file = tmp_path / "file1.raw"
+    data_file.write_text("raw-data", encoding="utf-8")
+
+    result = SubmissionClient().upload_data_files(
+        "MTBLS123",
+        data_files_root_path=tmp_path,
+        ftp_factory=SizeMismatchFTP,
+    )
+
+    assert result.uploaded_files == []
+    assert result.errors == [
+        "file1.raw: Uploaded temporary file size mismatch for file1.raw: expected 8 bytes, got 7 bytes."
+    ]
+    assert FakeFTP.instances[0].deleted_paths == ["/incoming/MTBLS123/.ftp_file1.raw"]
+
+
+@patch("mtblspy.commands.submissions.client.requests.get")
+@patch("mtblspy.commands.submissions.client.get_api_key")
+@patch("mtblspy.commands.submissions.client.get_base_url")
+def test_clear_ftp_temporary_files_deletes_dot_ftp_files(
+    mock_get_base_url,
+    mock_get_api_key,
+    mock_get,
+):
+    FakeFTP.instances = []
+    mock_get_base_url.return_value = "https://wwwdev.ebi.ac.uk/metabolights/ws"
+    mock_get_api_key.return_value = "valid-key"
+    response = MagicMock()
+    response.json.return_value = {
+        "study_id": "MTBLS123",
+        "ftp_folder": "/incoming/MTBLS123",
+        "ftp_host": "ftp-private.ebi.ac.uk",
+        "ftp_user": "ftp-user",
+        "ftp_password": "ftp-password",
+    }
+    mock_get.return_value = response
+
+    result = SubmissionClient().clear_ftp_temporary_files(
+        "MTBLS123",
+        ftp_factory=TemporaryFilesFTP,
+    )
+
+    assert result.deleted_files == [".ftp_root.raw", "folder1/.ftp_nested.raw"]
+    assert result.errors == []
+    assert FakeFTP.instances[0].deleted_paths == [
+        "/incoming/MTBLS123/.ftp_root.raw",
+        "/incoming/MTBLS123/folder1/.ftp_nested.raw",
+    ]
+
+
+@patch("mtblspy.commands.submissions.client.requests.get")
+@patch("mtblspy.commands.submissions.client.get_api_key")
+@patch("mtblspy.commands.submissions.client.get_base_url")
+def test_clear_ftp_temporary_files_falls_back_to_nlst_when_mlsd_is_not_supported(
+    mock_get_base_url,
+    mock_get_api_key,
+    mock_get,
+):
+    FakeFTP.instances = []
+    mock_get_base_url.return_value = "https://wwwdev.ebi.ac.uk/metabolights/ws"
+    mock_get_api_key.return_value = "valid-key"
+    response = MagicMock()
+    response.json.return_value = {
+        "study_id": "MTBLS123",
+        "ftp_folder": "/incoming/MTBLS123",
+        "ftp_host": "ftp-private.ebi.ac.uk",
+        "ftp_user": "ftp-user",
+        "ftp_password": "ftp-password",
+    }
+    mock_get.return_value = response
+
+    result = SubmissionClient().clear_ftp_temporary_files(
+        "MTBLS123",
+        ftp_factory=NlstOnlyTemporaryFilesFTP,
+    )
+
+    assert result.deleted_files == [".ftp_root.raw", "folder1/.ftp_nested.raw"]
+    assert result.errors == []
+    assert FakeFTP.instances[0].deleted_paths == [
+        "/incoming/MTBLS123/.ftp_root.raw",
+        "/incoming/MTBLS123/folder1/.ftp_nested.raw",
     ]

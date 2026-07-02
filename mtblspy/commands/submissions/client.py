@@ -70,6 +70,13 @@ class DataUploadResult:
 
 
 @dataclass
+class FtpTemporaryCleanupResult:
+    study_id: str
+    deleted_files: list[str]
+    errors: list[str] = field(default_factory=list)
+
+
+@dataclass
 class DataUploadPlan:
     files: list[Path]
     empty_folders: list[str]
@@ -413,14 +420,17 @@ class SubmissionClient:
                         timeout=METADATA_UPLOAD_TIMEOUT_SECONDS,
                     )
                 if response.status_code not in (200, 201):
-                    errors.append(f"{file_path.name}: {response.status_code} {response.text}")
+                    errors.append(format_metadata_upload_error(file_path.name, response))
                     continue
                 responses.append(get_response_payload(response))
             except Exception as exc:
                 errors.append(f"{file_path.name}: {exc}")
 
         if errors:
-            raise SubmissionAPIError("Metadata upload failed:\n" + "\n".join(errors))
+            raise SubmissionAPIError(
+                f"Metadata upload failed for {len(errors)} file(s).",
+                errors=errors,
+            )
 
         validation_result = None
         if validate_after_upload:
@@ -447,6 +457,7 @@ class SubmissionClient:
         skip_uploaded_files=None,
         skip_empty_folders=None,
         ftp_factory=None,
+        progress_callback=None,
     ):
         study_id = normalize_study_id(study_id)
         plan = resolve_data_upload_plan(
@@ -454,6 +465,11 @@ class SubmissionClient:
             selected_files=selected_files,
             skip_uploaded_files=skip_uploaded_files,
             skip_empty_folders=skip_empty_folders,
+        )
+        emit_data_upload_progress(
+            progress_callback,
+            "start",
+            total=len(plan.files) + len(plan.empty_folders),
         )
         if plan.missing_on_local:
             return DataUploadResult(
@@ -485,12 +501,30 @@ class SubmissionClient:
             for empty_folder in plan.empty_folders:
                 if empty_folder in remote_folders:
                     skipped_files.append(f"{empty_folder}/")
+                    emit_data_upload_progress(
+                        progress_callback,
+                        "item",
+                        path=f"{empty_folder}/",
+                        status="skipped",
+                    )
                     continue
                 try:
                     ensure_ftp_directory(ftp, empty_folder, root_directory=upload_root)
                     uploaded_files.append(f"{empty_folder}/")
+                    emit_data_upload_progress(
+                        progress_callback,
+                        "item",
+                        path=f"{empty_folder}/",
+                        status="uploaded",
+                    )
                 except Exception:
                     skipped_files.append(f"{empty_folder}/")
+                    emit_data_upload_progress(
+                        progress_callback,
+                        "item",
+                        path=f"{empty_folder}/",
+                        status="skipped",
+                    )
 
             for file_path in plan.files:
                 relative_path = to_posix_relative_path(file_path, root_path)
@@ -498,16 +532,40 @@ class SubmissionClient:
                 remote_size = remote_files.get(relative_path)
                 if remote_size is None and relative_path in remote_files:
                     skipped_files.append(relative_path)
+                    emit_data_upload_progress(
+                        progress_callback,
+                        "item",
+                        path=relative_path,
+                        status="skipped",
+                    )
                     continue
                 if remote_size == local_size:
                     skipped_files.append(relative_path)
+                    emit_data_upload_progress(
+                        progress_callback,
+                        "item",
+                        path=relative_path,
+                        status="skipped",
+                    )
                     continue
 
                 try:
                     upload_ftp_file(ftp, upload_root, file_path, relative_path)
                     uploaded_files.append(relative_path)
+                    emit_data_upload_progress(
+                        progress_callback,
+                        "item",
+                        path=relative_path,
+                        status="uploaded",
+                    )
                 except Exception as exc:
                     errors.append(f"{relative_path}: {exc}")
+                    emit_data_upload_progress(
+                        progress_callback,
+                        "item",
+                        path=relative_path,
+                        status="failed",
+                    )
         finally:
             try:
                 ftp.quit()
@@ -519,6 +577,26 @@ class SubmissionClient:
             uploaded_files=uploaded_files,
             skipped_files=skipped_files,
             missing_on_local=[],
+            errors=errors,
+        )
+
+    def clear_ftp_temporary_files(self, study_id, ftp_factory=None):
+        study_id = normalize_study_id(study_id)
+        ftp_details = self.get_private_ftp_credentials(study_id)
+        ftp = connect_ftp(ftp_details, ftp_factory=ftp_factory)
+
+        try:
+            upload_root = enter_ftp_upload_root(ftp, ftp_details.ftp_folder)
+            deleted_files, errors = delete_ftp_temporary_files(ftp, upload_root)
+        finally:
+            try:
+                ftp.quit()
+            except Exception:
+                pass
+
+        return FtpTemporaryCleanupResult(
+            study_id=study_id,
+            deleted_files=deleted_files,
             errors=errors,
         )
 
@@ -849,6 +927,15 @@ def resolve_data_upload_plan(
     )
 
 
+def emit_data_upload_progress(progress_callback, event, **payload):
+    if not progress_callback:
+        return
+    try:
+        progress_callback({"event": event, **payload})
+    except Exception:
+        pass
+
+
 def collect_data_upload_paths(
     root_path,
     selected_path,
@@ -1034,11 +1121,13 @@ def upload_ftp_file(ftp, root_directory, file_path, relative_path):
     remote_directory = posixpath.dirname(relative_path)
     remote_filename = posixpath.basename(relative_path)
     temporary_filename = get_temporary_ftp_filename(remote_filename)
+    local_size = file_path.stat().st_size
     try:
         create_ftp_directory_path(ftp, root_directory, remote_directory)
         ensure_ftp_directory(ftp, remote_directory, root_directory=root_directory)
         with file_path.open("rb") as file_handle:
             ftp.storbinary(f"STOR {temporary_filename}", file_handle)
+        verify_ftp_file_size(ftp, temporary_filename, local_size, relative_path)
         ftp.rename(temporary_filename, remote_filename)
     except error_perm:
         upload_ftp_file_by_relative_path(ftp, root_directory, file_path, relative_path)
@@ -1046,6 +1135,7 @@ def upload_ftp_file(ftp, root_directory, file_path, relative_path):
 
 def upload_ftp_file_by_relative_path(ftp, root_directory, file_path, relative_path):
     temporary_relative_path = get_temporary_ftp_relative_path(relative_path)
+    local_size = file_path.stat().st_size
     if root_directory:
         try:
             ftp.cwd(root_directory)
@@ -1053,7 +1143,42 @@ def upload_ftp_file_by_relative_path(ftp, root_directory, file_path, relative_pa
             pass
     with file_path.open("rb") as file_handle:
         ftp.storbinary(f"STOR {temporary_relative_path}", file_handle)
+    verify_ftp_file_size(ftp, temporary_relative_path, local_size, relative_path)
     ftp.rename(temporary_relative_path, relative_path)
+
+
+def verify_ftp_file_size(ftp, temporary_path, expected_size, final_relative_path):
+    uploaded_size = get_ftp_file_size(ftp, temporary_path)
+    if uploaded_size is None:
+        return
+    if uploaded_size == expected_size:
+        return
+
+    try:
+        ftp.delete(temporary_path)
+    except Exception:
+        pass
+    raise SubmissionAPIError(
+        f"Uploaded temporary file size mismatch for {final_relative_path}: "
+        f"expected {expected_size} bytes, got {uploaded_size} bytes."
+    )
+
+
+def get_ftp_file_size(ftp, remote_path):
+    try:
+        return parse_ftp_size(ftp.size(remote_path))
+    except Exception:
+        pass
+
+    directory = posixpath.dirname(remote_path) or "."
+    filename = posixpath.basename(remote_path)
+    try:
+        for name, facts in ftp.mlsd(directory):
+            if name == filename:
+                return parse_ftp_size(facts.get("size"))
+    except Exception:
+        return None
+    return None
 
 
 def get_temporary_ftp_relative_path(relative_path):
@@ -1067,6 +1192,103 @@ def get_temporary_ftp_relative_path(relative_path):
 
 def get_temporary_ftp_filename(filename):
     return f".ftp_{filename}"
+
+
+def delete_ftp_temporary_files(ftp, remote_root):
+    deleted_files = []
+    errors = []
+    try:
+        walk_and_delete_ftp_temporary_files(ftp, remote_root or ".", "", deleted_files, errors)
+    except Exception as exc:
+        errors.append(f"Unable to scan FTP folder: {exc}")
+    return deleted_files, errors
+
+
+def walk_and_delete_ftp_temporary_files(ftp, remote_directory, relative_directory, deleted_files, errors):
+    try:
+        entries = list(ftp.mlsd(remote_directory))
+    except Exception:
+        walk_and_delete_ftp_temporary_files_by_nlst(
+            ftp,
+            remote_directory,
+            relative_directory,
+            deleted_files,
+            errors,
+        )
+        return
+
+    for name, facts in entries:
+        if name in (".", ".."):
+            continue
+        entry_type = facts.get("type", "")
+        relative_path = join_relative_path(relative_directory, name)
+        remote_path = join_remote_path(remote_directory, name)
+        if entry_type == "dir":
+            walk_and_delete_ftp_temporary_files(ftp, remote_path, relative_path, deleted_files, errors)
+        elif entry_type == "file" and name.startswith(".ftp_"):
+            try:
+                ftp.delete(remote_path)
+                deleted_files.append(relative_path)
+            except Exception as exc:
+                errors.append(f"{relative_path}: {exc}")
+
+
+def walk_and_delete_ftp_temporary_files_by_nlst(ftp, remote_directory, relative_directory, deleted_files, errors):
+    try:
+        entries = ftp.nlst(remote_directory)
+    except Exception as exc:
+        errors.append(f"{relative_directory or '.'}: {exc}")
+        return
+
+    for entry in entries:
+        remote_path = normalize_ftp_nlst_path(remote_directory, entry)
+        if not remote_path:
+            continue
+        name = posixpath.basename(remote_path.rstrip("/"))
+        if name in ("", ".", ".."):
+            continue
+        relative_path = join_relative_path(relative_directory, name)
+        if name.startswith(".ftp_"):
+            try:
+                ftp.delete(remote_path)
+                deleted_files.append(relative_path)
+            except Exception as exc:
+                errors.append(f"{relative_path}: {exc}")
+            continue
+        if is_ftp_directory(ftp, remote_path):
+            walk_and_delete_ftp_temporary_files_by_nlst(
+                ftp,
+                remote_path,
+                relative_path,
+                deleted_files,
+                errors,
+            )
+
+
+def normalize_ftp_nlst_path(remote_directory, entry):
+    entry_path = str(entry).strip().rstrip("/")
+    if not entry_path:
+        return ""
+    remote_directory = (remote_directory or ".").rstrip("/")
+    if entry_path.startswith("/") or remote_directory in ("", "."):
+        return entry_path
+    if entry_path.startswith(f"{remote_directory}/"):
+        return entry_path
+    return join_remote_path(remote_directory, entry_path)
+
+
+def is_ftp_directory(ftp, remote_path):
+    current_directory = get_ftp_current_directory(ftp)
+    try:
+        ftp.cwd(remote_path)
+    except Exception:
+        return False
+    finally:
+        try:
+            ftp.cwd(current_directory)
+        except Exception:
+            pass
+    return True
 
 
 def create_ftp_directory_path(ftp, root_directory, remote_directory):
@@ -1094,6 +1316,26 @@ def get_response_payload(response):
         return response.json()
     except ValueError:
         return response.text
+
+
+def format_metadata_upload_error(file_name, response):
+    response_data = get_response_payload(response)
+    message = extract_response_error_message(response_data)
+    if message:
+        return f"{file_name}: HTTP {response.status_code} - {message}"
+    return f"{file_name}: HTTP {response.status_code}"
+
+
+def extract_response_error_message(response_data):
+    if isinstance(response_data, dict):
+        for key in ("message", "error_message", "errorMessage", "err", "error"):
+            value = response_data.get(key)
+            if value:
+                return str(value)
+        return json.dumps(response_data, default=str)
+    if response_data:
+        return str(response_data)
+    return ""
 
 
 def is_successful_response(response):
