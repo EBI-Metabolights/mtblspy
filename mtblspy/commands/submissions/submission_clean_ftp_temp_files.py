@@ -18,16 +18,17 @@ from mtblspy.commands.submissions.exceptions import SubmissionError
     type=str,
     help="MetaboLights REST API endpoint for FTP credentials, overriding configured defaults.",
 )
+@click.option("--base-url", help="MetaboLights REST API base URL used to select credentials.")
 @click.option(
     "--output",
     "-o",
     type=click.Path(dir_okay=False),
-    help="Save cleanup options and result as JSON. Filename-only values are saved to the study cache.",
+    help="Save cleanup options and result as JSON. Filename-only values are saved to the current directory.",
 )
-def clean_ftp_temp_files(study_id, mtbls_submission_endpoint, output):
+def clean_ftp_temp_files(study_id, mtbls_submission_endpoint, base_url, output):
     """Delete incomplete .ftp_ temporary files from the study private FTP area."""
     normalized_study_id = normalize_study_id(study_id)
-    normalized_endpoint = normalize_endpoint(mtbls_submission_endpoint)
+    normalized_endpoint = normalize_endpoint(mtbls_submission_endpoint or base_url)
 
     try:
         client = SubmissionClient(base_url=normalized_endpoint)

@@ -5,7 +5,7 @@ from mtblspy.commands.submissions.client import save_sample_study_input
 
 
 @click.command(name="study-creation-input")
-@json_output_option("Save the example study creation JSON input. Filename-only values are saved to the default data folder.")
+@json_output_option("Save the example study creation JSON input. Filename-only values are saved to the current directory.")
 @click.option("--data-folder", type=click.Path(file_okay=False), help="Directory to save study_input.json.")
 @click.option("--overwrite/--no-overwrite", default=True, show_default=True, help="Overwrite an existing study_input.json.")
 def study_creation_input(output, data_folder, overwrite):

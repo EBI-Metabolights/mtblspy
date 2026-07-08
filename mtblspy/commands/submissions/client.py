@@ -6,13 +6,14 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlencode, urlsplit
 
 import requests
 
 from mtblspy.config import (
     get_api_key,
     get_base_url,
+    get_credential_base_url,
     get_jwt_token,
     get_refresh_token,
     get_user_name,
@@ -70,6 +71,23 @@ class DataUploadResult:
 
 
 @dataclass
+class FileDownloadResult:
+    study_id: str
+    downloaded_files: list[Path]
+    skipped_files: list[str]
+    missing_files: list[str]
+    errors: list[str] = field(default_factory=list)
+
+
+@dataclass
+class FileDeleteResult:
+    study_id: str
+    deleted_files: list[str]
+    missing_files: list[str]
+    errors: list[str] = field(default_factory=list)
+
+
+@dataclass
 class FtpTemporaryCleanupResult:
     study_id: str
     deleted_files: list[str]
@@ -88,6 +106,7 @@ class SubmissionClient:
     def __init__(self, base_url=None, api_token=None):
         self.rest_api_base_url = get_rest_api_base_url(base_url or get_base_url())
         self.submission_api_base_url = get_submission_api_base_url(self.rest_api_base_url)
+        self.credential_base_url = get_credential_base_url(self.rest_api_base_url)
         self.api_token = api_token
 
     def get_auth_headers(self):
@@ -95,32 +114,49 @@ class SubmissionClient:
         return {"user-token": api_token}
 
     def get_submission_headers(self, force_refresh=False):
-        jwt_token = None if force_refresh else get_jwt_token(self.submission_api_base_url)
+        jwt_token = None if force_refresh else get_jwt_token(
+            self.submission_api_base_url,
+            credential_base_url=self.credential_base_url,
+        )
         if not jwt_token and not force_refresh:
-            jwt_token = get_jwt_token(self.rest_api_base_url)
+            jwt_token = get_jwt_token(
+                self.rest_api_base_url,
+                credential_base_url=self.credential_base_url,
+            )
         if jwt_token and not force_refresh and not is_jwt_expired(jwt_token):
             return {"accept": "application/json", "Authorization": f"Bearer {jwt_token}"}
 
         # Try to refresh using a stored refresh token
-        refresh_token = get_refresh_token(self.submission_api_base_url)
+        refresh_token = get_refresh_token(
+            self.submission_api_base_url,
+            credential_base_url=self.credential_base_url,
+        )
         if refresh_token:
             new_jwt = self.refresh_jwt_token(refresh_token)
             if new_jwt:
-                save_jwt_token(self.submission_api_base_url, new_jwt)
+                save_jwt_token(
+                    self.submission_api_base_url,
+                    new_jwt,
+                    credential_base_url=self.credential_base_url,
+                )
                 return {"accept": "application/json", "Authorization": f"Bearer {new_jwt}"}
 
         # Final fallback: exchange stored api_token for a JWT
-        api_token = self.api_token or get_api_key()
+        api_token = self.api_token or get_api_key(credential_base_url=self.credential_base_url)
         if not api_token:
             raise AuthenticationError(
                 "Not logged in. Please run 'mtbls auth login' first."
             )
         jwt_token = self.exchange_api_token_for_jwt(api_token.strip())
-        save_jwt_token(self.submission_api_base_url, jwt_token)
+        save_jwt_token(
+            self.submission_api_base_url,
+            jwt_token,
+            credential_base_url=self.credential_base_url,
+        )
         return {"accept": "application/json", "Authorization": f"Bearer {jwt_token}"}
 
     def exchange_api_token_for_jwt(self, api_token):
-        user_name = get_user_name()
+        user_name = get_user_name(credential_base_url=self.credential_base_url)
         if not user_name:
             raise AuthenticationError(
                 "Unable to get JWT token for submission API. "
@@ -190,7 +226,11 @@ class SubmissionClient:
             )
             new_jwt = get_jwt_from_response(response) if response.ok else None
             if new_jwt:
-                save_refresh_token_from_response(self.submission_api_base_url, response)
+                save_refresh_token_from_response(
+                    self.submission_api_base_url,
+                    response,
+                    credential_base_url=self.credential_base_url,
+                )
                 return new_jwt
         except requests.RequestException:
             pass
@@ -213,7 +253,11 @@ class SubmissionClient:
             )
             new_jwt = get_jwt_from_response(response) if response.ok else None
             if new_jwt:
-                save_refresh_token_from_response(self.submission_api_base_url, response)
+                save_refresh_token_from_response(
+                    self.submission_api_base_url,
+                    response,
+                    credential_base_url=self.credential_base_url,
+                )
                 return new_jwt
         except requests.RequestException:
             pass
@@ -221,7 +265,7 @@ class SubmissionClient:
         return None
 
     def require_api_token(self):
-        api_token = self.api_token or get_api_key()
+        api_token = self.api_token or get_api_key(credential_base_url=self.credential_base_url)
         if not api_token:
             raise AuthenticationError("Not logged in. Please run 'mtbls auth login' first.")
         return api_token.strip()
@@ -307,10 +351,23 @@ class SubmissionClient:
                 )
 
         # 3. Save everything
-        save_config(api_key=api_token, base_url=self.rest_api_base_url, user_name=user_name)
-        save_jwt_token(self.submission_api_base_url, jwt_token)
+        save_config(
+            api_key=api_token,
+            base_url=self.rest_api_base_url,
+            user_name=user_name,
+            credential_base_url=self.credential_base_url,
+        )
+        save_jwt_token(
+            self.submission_api_base_url,
+            jwt_token,
+            credential_base_url=self.credential_base_url,
+        )
         if refresh_token:
-            save_refresh_token(self.submission_api_base_url, refresh_token)
+            save_refresh_token(
+                self.submission_api_base_url,
+                refresh_token,
+                credential_base_url=self.credential_base_url,
+            )
 
     def password_login(self, user_name, password):
         """Backward-compatible alias for username/password login."""
@@ -359,7 +416,7 @@ class SubmissionClient:
             json=request.model_dump(by_alias=True),
             timeout=60,
         )
-        response.raise_for_status()
+        raise_for_response_error(response, "Study creation failed")
         return response.json()
 
     def load_study_creation_request(self, input_file_path, input_format=StudyInputFormat.JSON):
@@ -447,6 +504,193 @@ class SubmissionClient:
             skipped_files=skipped_files,
             responses=responses,
             validation_result=validation_result,
+        )
+
+    def download_metadata_files(
+        self,
+        study_id,
+        target_path=None,
+        selected_files=None,
+    ):
+        study_id = normalize_study_id(study_id)
+        selected_file_names = parse_selected_metadata_files(selected_files)
+        if selected_file_names:
+            file_names = selected_file_names
+            skipped_files = []
+        else:
+            file_names = self.get_study_metadata_file_names(study_id)
+            skipped_files = []
+        if not file_names:
+            raise SubmissionAPIError(f"No metadata files found for {study_id}.")
+
+        target_root = resolve_download_target_path(target_path, study_id)
+        target_root.mkdir(parents=True, exist_ok=True)
+        downloaded_files = []
+        missing_files = []
+        errors = []
+
+        for file_name in file_names:
+            try:
+                output_path = target_root / file_name
+                self.download_metadata_file(study_id, file_name, output_path)
+                downloaded_files.append(output_path.resolve())
+            except FileNotFoundError:
+                missing_files.append(file_name)
+            except SubmissionAPIError as exc:
+                if exc.errors:
+                    errors.extend(f"{file_name}: {error}" for error in exc.errors)
+                else:
+                    errors.append(f"{file_name}: {exc}")
+            except Exception as exc:
+                errors.append(f"{file_name}: {exc}")
+
+        return FileDownloadResult(
+            study_id=study_id,
+            downloaded_files=downloaded_files,
+            skipped_files=skipped_files,
+            missing_files=missing_files,
+            errors=errors,
+        )
+
+    def get_study_metadata_file_names(self, study_id):
+        isa_json = self.get_study_isa_json(study_id)
+        file_names = collect_metadata_file_names(isa_json)
+        if "i_Investigation.txt" not in file_names:
+            file_names.insert(0, "i_Investigation.txt")
+        return file_names
+
+    def download_metadata_file(self, study_id, file_name, output_path):
+        headers = self.get_auth_headers()
+        soft_errors = []
+        not_found_count = 0
+        for url in build_metadata_download_urls(self.rest_api_base_url, study_id, file_name):
+            response = requests.get(url, headers=headers, timeout=60)
+            status_code = int(response.status_code)
+            if 200 <= status_code < 300:
+                output_path.parent.mkdir(parents=True, exist_ok=True)
+                output_path.write_bytes(response.content)
+                return output_path
+            if status_code == 404:
+                not_found_count += 1
+                soft_errors.append(format_metadata_file_response_error(url, response))
+                continue
+            if status_code in (400, 405):
+                soft_errors.append(format_metadata_file_response_error(url, response))
+                continue
+            try:
+                response.raise_for_status()
+            except requests.RequestException as exc:
+                raise SubmissionAPIError(
+                    f"Unable to download metadata file {file_name} for {study_id}.",
+                    errors=[format_metadata_file_response_error(url, response)],
+                ) from exc
+        if not_found_count and not_found_count == len(soft_errors):
+            raise FileNotFoundError(file_name)
+        raise SubmissionAPIError(
+            f"Unable to download metadata file {file_name} for {study_id}.",
+            errors=soft_errors,
+        )
+
+    def delete_metadata_files(self, study_id, selected_files):
+        study_id = normalize_study_id(study_id)
+        file_names = parse_comma_separated_values(selected_files)
+        if not file_names:
+            raise SubmissionAPIError(
+                "Metadata delete requires --files with comma-separated metadata filenames."
+            )
+
+        response = self.post_metadata_delete_files(study_id, build_delete_files_payload(file_names))
+        if not is_successful_response(response):
+            raise SubmissionAPIError(
+                f"Metadata delete failed for {study_id}.",
+                errors=[format_metadata_file_response_error(response.url, response)],
+            )
+        deleted_files, errors = parse_metadata_delete_response(response, file_names)
+
+        return FileDeleteResult(
+            study_id=study_id,
+            deleted_files=deleted_files,
+            missing_files=[],
+            errors=errors,
+        )
+
+    def post_metadata_delete_files(self, study_id, payload):
+        return requests.post(
+            f"{self.rest_api_base_url.rstrip('/')}/studies/{study_id}/files",
+            headers={
+                **self.get_auth_headers(),
+                "accept": "application/json",
+                "Content-Type": "application/json",
+            },
+            params={"location": "study", "force": "false"},
+            json=payload,
+            timeout=60,
+        )
+
+    def download_data_files(
+        self,
+        study_id,
+        target_path=None,
+        selected_files=None,
+        download_all=False,
+        ftp_factory=None,
+        progress_callback=None,
+    ):
+        study_id = normalize_study_id(study_id)
+        selected_file_names = parse_comma_separated_values(selected_files)
+        if selected_file_names and download_all:
+            raise SubmissionAPIError("Use either --files or --all, not both.")
+        if not selected_file_names and not download_all:
+            raise SubmissionAPIError(
+                "Data download requires --files because study data files can be large. "
+                "Use --files with comma-separated file or folder names, or pass --all to download all data files."
+            )
+        ftp_details = self.get_private_ftp_credentials(study_id)
+        ftp = connect_ftp(ftp_details, ftp_factory=ftp_factory)
+        target_root = resolve_data_download_target_path(target_path, study_id)
+        downloaded_files = []
+        skipped_files = []
+        missing_files = []
+        errors = []
+
+        try:
+            upload_root = enter_ftp_upload_root(ftp, ftp_details.ftp_folder)
+            remote_files, _remote_folders = index_ftp_data_files(ftp, upload_root)
+            selected_remote_files, missing_files = select_remote_data_files(remote_files, selected_file_names)
+            emit_file_download_progress(progress_callback, "start", total=len(selected_remote_files))
+            target_root.mkdir(parents=True, exist_ok=True)
+
+            for relative_path in selected_remote_files:
+                try:
+                    output_path = target_root / Path(relative_path)
+                    download_ftp_file(ftp, upload_root, relative_path, output_path)
+                    downloaded_files.append(output_path.resolve())
+                    emit_file_download_progress(
+                        progress_callback,
+                        "item",
+                        path=relative_path,
+                        status="downloaded",
+                    )
+                except Exception as exc:
+                    errors.append(f"{relative_path}: {exc}")
+                    emit_file_download_progress(
+                        progress_callback,
+                        "item",
+                        path=relative_path,
+                        status="failed",
+                    )
+        finally:
+            try:
+                ftp.quit()
+            except Exception:
+                pass
+
+        return FileDownloadResult(
+            study_id=study_id,
+            downloaded_files=downloaded_files,
+            skipped_files=skipped_files,
+            missing_files=missing_files,
+            errors=errors,
         )
 
     def upload_data_files(
@@ -793,6 +1037,129 @@ def parse_comma_separated_values(values):
     return parsed_values
 
 
+def resolve_download_target_path(target_path, study_id):
+    if not target_path:
+        return (DEFAULT_LOCAL_SUBMISSION_DATA_PATH / normalize_study_id(study_id)).resolve()
+    return Path(target_path).expanduser().resolve()
+
+
+def resolve_data_download_target_path(target_path, study_id):
+    if not target_path:
+        return (DEFAULT_LOCAL_SUBMISSION_DATA_PATH / normalize_study_id(study_id) / "FILES").resolve()
+    return Path(target_path).expanduser().resolve()
+
+
+def collect_metadata_file_names(value):
+    file_names = []
+    seen = set()
+
+    def add_file_name(candidate):
+        candidate = str(candidate).strip()
+        file_name = posixpath.basename(candidate)
+        if is_metadata_filename(file_name) and file_name not in seen:
+            file_names.append(file_name)
+            seen.add(file_name)
+
+    def visit(item):
+        if isinstance(item, dict):
+            for key, child_value in item.items():
+                add_file_name(key)
+                visit(child_value)
+            return
+        if isinstance(item, list):
+            for child_value in item:
+                visit(child_value)
+            return
+        if isinstance(item, str):
+            add_file_name(item)
+
+    visit(value)
+    file_names.sort(key=metadata_file_sort_key)
+    return file_names
+
+
+def metadata_file_sort_key(file_name):
+    prefixes = {"i_": 0, "s_": 1, "a_": 2, "m_": 3}
+    for prefix, index in prefixes.items():
+        if file_name.startswith(prefix):
+            return (index, file_name)
+    return (99, file_name)
+
+
+def build_metadata_download_urls(base_url, study_id, file_name):
+    base_url = base_url.rstrip("/")
+    study_id = normalize_study_id(study_id)
+    quoted_file_name = quote(file_name)
+    file_query = urlencode({"file": file_name})
+    return [
+        f"{base_url}/studies/{study_id}/download?{file_query}",
+        f"{base_url}/studies/{study_id}/files/{quoted_file_name}",
+        f"{base_url}/studies/{study_id}/metadata-files/{quoted_file_name}",
+        f"{base_url}/studies/{study_id}/metadata/{quoted_file_name}",
+        f"{base_url}/studies/{study_id}/download/{quoted_file_name}",
+    ]
+
+
+def build_delete_files_payload(file_names):
+    return {"files": [{"name": file_name} for file_name in file_names]}
+
+
+def parse_metadata_delete_response(response, requested_files):
+    response_data = get_response_payload(response)
+    messages = collect_response_error_messages(response_data)
+    blocked_files = set()
+    confirmed_deleted_files = set()
+    errors = []
+    for message in messages:
+        message_text = str(message).strip()
+        if not message_text:
+            continue
+        matched_files = [file_name for file_name in requested_files if file_name in message_text]
+        if matched_files and is_metadata_delete_success_message(message_text):
+            confirmed_deleted_files.update(matched_files)
+            continue
+        if matched_files or is_metadata_delete_failure_message(message_text):
+            errors.append(message_text)
+            blocked_files.update(matched_files)
+
+    if errors:
+        deleted_files = [file_name for file_name in requested_files if file_name in confirmed_deleted_files]
+    else:
+        deleted_files = [file_name for file_name in requested_files if file_name not in blocked_files]
+    if errors and not blocked_files and not confirmed_deleted_files:
+        deleted_files = []
+    return deleted_files, deduplicate_strings(errors)
+
+
+def is_metadata_delete_success_message(message):
+    normalized_message = str(message).lower()
+    return "deleted" in normalized_message or "is deleted" in normalized_message
+
+
+def is_metadata_delete_failure_message(message):
+    normalized_message = str(message).lower()
+    failure_terms = ("not allowed", "cannot", "failed", "error", "denied")
+    delete_terms = ("delete", "remove")
+    return any(term in normalized_message for term in failure_terms) and any(
+        term in normalized_message for term in delete_terms
+    )
+
+
+def format_metadata_file_response_error(url, response):
+    status_code = getattr(response, "status_code", "unknown")
+    reason = getattr(response, "reason", "") or ""
+    status = f"HTTP {status_code}"
+    if reason:
+        status = f"{status} {reason}"
+    try:
+        details = extract_response_errors(response)
+    except Exception:
+        details = []
+    if details:
+        return f"{status} - {'; '.join(details)} for url: {url}"
+    return f"{status} for url: {url}"
+
+
 def resolve_metadata_file_paths(
     study_id,
     metadata_path=None,
@@ -928,6 +1295,15 @@ def resolve_data_upload_plan(
 
 
 def emit_data_upload_progress(progress_callback, event, **payload):
+    if not progress_callback:
+        return
+    try:
+        progress_callback({"event": event, **payload})
+    except Exception:
+        pass
+
+
+def emit_file_download_progress(progress_callback, event, **payload):
     if not progress_callback:
         return
     try:
@@ -1181,6 +1557,50 @@ def get_ftp_file_size(ftp, remote_path):
     return None
 
 
+def select_remote_data_files(remote_files, selected_files=None):
+    available_files = sorted(relative_path for relative_path in remote_files if is_data_download_filename(relative_path))
+    available_file_set = set(available_files)
+    if not selected_files:
+        return available_files, []
+
+    selected_remote_files = []
+    missing_files = []
+    seen = set()
+    for selected_file in selected_files:
+        normalized_selection = selected_file.strip().strip("/")
+        if not normalized_selection:
+            continue
+        matches = []
+        if normalized_selection in available_file_set:
+            matches.append(normalized_selection)
+        prefix = f"{normalized_selection.rstrip('/')}/"
+        matches.extend(path for path in available_files if path.startswith(prefix))
+        if not matches:
+            missing_files.append(selected_file)
+            continue
+        for path in sorted(matches):
+            if path not in seen:
+                selected_remote_files.append(path)
+                seen.add(path)
+    return selected_remote_files, missing_files
+
+
+def is_data_download_filename(relative_path):
+    file_name = posixpath.basename(relative_path)
+    return bool(file_name) and not file_name.startswith(".ftp_") and not is_metadata_filename(file_name)
+
+
+def download_ftp_file(ftp, root_directory, relative_path, output_path):
+    if root_directory:
+        try:
+            ftp.cwd(root_directory)
+        except error_perm:
+            pass
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with output_path.open("wb") as output_file:
+        ftp.retrbinary(f"RETR {relative_path}", output_file.write)
+
+
 def get_temporary_ftp_relative_path(relative_path):
     remote_directory = posixpath.dirname(relative_path)
     remote_filename = posixpath.basename(relative_path)
@@ -1407,10 +1827,14 @@ def find_api_token(value):
     return None
 
 
-def save_refresh_token_from_response(submission_api_base_url, response):
+def save_refresh_token_from_response(submission_api_base_url, response, credential_base_url=None):
     refresh_token = get_refresh_token_from_response(response)
     if refresh_token:
-        save_refresh_token(submission_api_base_url, refresh_token)
+        save_refresh_token(
+            submission_api_base_url,
+            refresh_token,
+            credential_base_url=credential_base_url,
+        )
 
 
 def is_jwt_expired(jwt_token, leeway_seconds=60):
@@ -1482,6 +1906,104 @@ def format_response_error(name, response):
     except ValueError:
         response_data = response.text
     return f"{name}: {response.status_code} {response_data}"
+
+
+def raise_for_response_error(response, context):
+    status_code = getattr(response, "status_code", None)
+    try:
+        is_error = status_code is not None and int(status_code) >= 400
+    except (TypeError, ValueError):
+        is_error = False
+    if not is_error:
+        return
+
+    reason = getattr(response, "reason", "") or ""
+    message = f"{context}: HTTP {status_code}"
+    if reason:
+        message = f"{message} {reason}"
+    errors = extract_response_errors(response)
+    raise SubmissionAPIError(message, errors=errors)
+
+
+def extract_response_errors(response):
+    try:
+        response_data = response.json()
+    except ValueError:
+        response_data = getattr(response, "text", "")
+    errors = collect_response_error_messages(response_data)
+    return deduplicate_strings(errors)
+
+
+def collect_response_error_messages(value):
+    if value is None:
+        return []
+    if isinstance(value, str):
+        value = value.strip()
+        return [value] if value else []
+    if isinstance(value, (int, float, bool)):
+        return [str(value)]
+    if isinstance(value, list):
+        errors = []
+        for item in value:
+            errors.extend(collect_response_error_messages(item))
+        return errors
+    if not isinstance(value, dict):
+        return [str(value)]
+
+    field = first_present_value(value, "field", "fieldName", "property", "propertyPath", "path", "name")
+    message = first_present_value(value, "message", "errorMessage", "error_message", "detail", "reason", "cause")
+    if field and message and not isinstance(message, (dict, list)):
+        return [f"{field}: {message}"]
+
+    errors = []
+    preferred_keys = (
+        "message",
+        "errorMessage",
+        "error_message",
+        "detail",
+        "details",
+        "error",
+        "errors",
+        "violations",
+        "rootCauses",
+        "causes",
+        "fieldErrors",
+        "validationErrors",
+    )
+    for key in preferred_keys:
+        if key in value:
+            child_errors = collect_response_error_messages(value[key])
+            if key in {"errors", "violations", "rootCauses", "causes", "fieldErrors", "validationErrors"}:
+                errors.extend(child_errors)
+            else:
+                errors.extend(child_errors)
+    if errors:
+        return errors
+
+    for key, child_value in value.items():
+        for child_error in collect_response_error_messages(child_value):
+            errors.append(f"{key}: {child_error}")
+    return errors
+
+
+def first_present_value(value, *keys):
+    for key in keys:
+        item = value.get(key)
+        if item not in (None, ""):
+            return item
+    return None
+
+
+def deduplicate_strings(values):
+    deduplicated = []
+    seen = set()
+    for value in values:
+        text = str(value).strip()
+        if not text or text in seen:
+            continue
+        deduplicated.append(text)
+        seen.add(text)
+    return deduplicated
 
 
 def get_task_status(response_data):

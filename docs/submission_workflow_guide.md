@@ -21,29 +21,37 @@ mtbls
     |-- list
     |-- ftp-credentials
     |-- compress-data-files
+    |-- check-folders
     |-- metadata-upload
-    |-- upload-data
+    |-- data-upload
+    |-- delete
+    |   `-- metadata
     |-- clean-ftp-temp-files
     `-- validate
 ```
 
-## Minimum Scenario
+## End-To-End Submission Workflow
+
+### Basic Submission Steps
 
 Use this path when you already have valid local ISA-Tab metadata and data files.
 
 | Step | Command | Purpose |
 | --- | --- | --- |
-| 1 | `mtbls auth login` | Store MetaboLights credentials in the system keyring. |
+| 1 | `mtbls auth login` | Authenticate with MetaboLights. |
 | 2 | `mtbls submission create` | Create a provisional study from `study_input.json`. |
-| 3 | `mtbls submission metadata-upload STUDY_ID -p PATH` | Upload ISA-Tab metadata files. |
-| 4 | `mtbls submission upload-data STUDY_ID --data-files-root-path PATH` | Upload data files to private FTP. |
-| 5 | `mtbls submission validate STUDY_ID --remote-validation` | Run server-side validation. |
+| 3 | `mtbls submission check-folders STUDY_ID --metadata-files-path PATH --data-files-path PATH` | Check local metadata and data folder prerequisites. |
+| 4 | `mtbls submission metadata-upload STUDY_ID -p PATH` | Upload ISA-Tab metadata files. |
+| 5 | `mtbls submission data-upload STUDY_ID --data-files-root-path PATH` | Upload data files to private FTP. |
+| 6 | `mtbls submission delete metadata STUDY_ID --files FILES` | Delete selected uploaded metadata files when needed. |
+| 7 | `mtbls submission validate STUDY_ID --remote-validation` | Run server-side validation. |
 
 ```bash
 mtbls auth login
 mtbls submission create --input-file ./study_input.json -o create_response.json
+mtbls submission check-folders MTBLS123 --metadata-files-path ./MTBLS123 --data-files-path ./MTBLS123/FILES
 mtbls submission metadata-upload MTBLS123 -p ./MTBLS123 -o metadata_upload_response.json
-mtbls submission upload-data MTBLS123 --data-files-root-path ./MTBLS123/FILES -o data_upload_response.json
+mtbls submission data-upload MTBLS123 --data-files-root-path ./MTBLS123/FILES -o data_upload_response.json
 mtbls submission validate MTBLS123 --remote-validation -o validation_report.json
 ```
 
@@ -93,20 +101,25 @@ mtbls submission create --input-file ./study_input.json -o create_response.json
 # 4. Optional: compress Agilent .d directories before upload.
 mtbls submission compress-data-files MTBLS123 --study-path ./MTBLS123 --update-metadata
 
-# 5. Upload only selected metadata files.
+# 5. Check local metadata and data folder prerequisites.
+mtbls submission check-folders MTBLS123 \
+  --metadata-files-path ./MTBLS123 \
+  --data-files-path ./MTBLS123/FILES
+
+# 6. Upload only selected metadata files.
 mtbls submission metadata-upload MTBLS123 \
   --metadata-files-path ./MTBLS123 \
   --selected-files i_Investigation.txt,s_MTBLS123.txt \
   -o metadata_upload_response.json
 
-# 6. Clean old interrupted FTP upload artifacts, then upload data.
+# 7. Clean old interrupted FTP upload artifacts, then upload data.
 mtbls submission clean-ftp-temp-files MTBLS123 -o ftp_cleanup_response.json
-mtbls submission upload-data MTBLS123 \
+mtbls submission data-upload MTBLS123 \
   --data-files-root-path ./MTBLS123/FILES \
   --skip-empty-folders tmp \
   -o data_upload_response.json
 
-# 7. Validate locally first, then remotely.
+# 8. Validate locally first, then remotely.
 mtbls submission validate MTBLS123 \
   -p ./MTBLS123 \
   --data-files-root-path ./MTBLS123/FILES \
@@ -127,7 +140,7 @@ mtbls submission validate MTBLS123 \
 | JSON output | Commands that return JSON print JSON to stdout. Use `-o/--output` to save it as a file. |
 | Filename-only `-o` | Saved under the command's default cache/data folder. Use `./path/file.json` or an absolute path to control location. |
 | Failure output | Upload commands return the same JSON structure on success and failure: `status`, `message`, `errors`, and command-specific file lists. |
-| Progress bars | `upload-data` shows a `tqdm` progress bar only in interactive terminals and writes it to stderr. JSON on stdout remains clean. Disable with `--no-progress`. |
+| Progress bars | `data-upload` shows a `tqdm` progress bar only in interactive terminals and writes it to stderr. JSON on stdout remains clean. Disable with `--no-progress`. |
 | Study IDs | Commands normalize study IDs to uppercase, for example `mtbls123` becomes `MTBLS123`. |
 
 ## Workflow Reference
@@ -159,7 +172,7 @@ mtbls --version
 
 #### `mtbls auth login`
 
-Store credentials and tokens in the system keyring.
+Authenticate with MetaboLights.
 
 ```bash
 mtbls auth login --user user@example.org --password 'secret'
@@ -167,20 +180,20 @@ mtbls auth login --user user@example.org --password 'secret'
 
 | Name | Required | Kind | Purpose |
 | --- | --- | --- | --- |
-| `--user`, `--username` | No | Option | MetaboLights username or email. If omitted, prompts interactively. Can use `MTBLS_USER`. |
-| `--password` | No | Option | MetaboLights password. If omitted, prompts interactively. Can use `MTBLS_PASSWORD`. |
-| `--base-url` | No | Option | API base URL for this login. Defaults to config, environment, or production. |
+| `--user`, `--username` | No | Option | MetaboLights username or email. If omitted, prompts interactively. |
+| `--password` | No | Option | MetaboLights password. If omitted, prompts interactively. |
+| `--base-url` | No | Option | API base URL for this login. Defaults to saved config or production. |
 
 Example output:
 
 ```text
 Logging in with https://www.ebi.ac.uk/metabolights/ws...
-Login successful. Tokens and user saved to system keyring.
+Login successful.
 ```
 
 #### `mtbls auth logout`
 
-Clear stored credentials from the system keyring.
+Clear the stored login session.
 
 ```bash
 mtbls auth logout
@@ -229,7 +242,9 @@ Example output:
 
 Templates help you start with valid study creation JSON and ISA-Tab files.
 
-#### `mtbls submission templates study-creation-input`
+#### Download Study Creation Template
+
+##### `mtbls submission templates study-creation-input`
 
 Create an example `study_input.json`.
 
@@ -243,11 +258,49 @@ mtbls submission templates study-creation-input -o ./study_input.json
 | `--data-folder` | No | Option | Directory where `study_input.json` should be saved. |
 | `--overwrite`, `--no-overwrite` | No | Option | Whether to overwrite an existing file. Default: `--overwrite`. |
 
-#### `mtbls submission templates isa-tab-file FILE_TYPE`
+Study creation example JSON:
+
+```json
+{
+  "title": "Untargeted metabolomics analysis of example samples",
+  "description": "Example study creation input for a MetaboLights provisional submission.",
+  "selectedStudyCategories": ["Metabolomics"],
+  "datasetLicenseAgreement": true,
+  "datasetPolicyAgreement": true,
+  "privacyPolicyAgreement": true,
+  "publications": [],
+  "relatedDatasets": [],
+  "funding": [],
+  "contacts": [
+    {
+      "firstName": "Jane",
+      "lastName": "Submitter",
+      "email": "jane.submitter@example.org",
+      "affiliation": "Example Institute",
+      "roles": ["submitter"]
+    }
+  ],
+  "designDescriptors": [],
+  "factors": [],
+  "assays": [
+    {
+      "measurement": "metabolite profiling",
+      "technology": "mass spectrometry",
+      "platform": "LC-MS"
+    }
+  ]
+}
+```
+
+#### Download ISA Metadata
+
+##### `mtbls submission templates isa-tab-file FILE_TYPE`
 
 Download an ISA-Tab metadata template.
 
 ```bash
+mtbls submission templates isa-tab-file investigation --target-path ./MTBLS123
+mtbls submission templates isa-tab-file sample --target-path ./MTBLS123
 mtbls submission templates isa-tab-file assay --template-name LC-MS --target-path ./MTBLS123
 ```
 
@@ -338,6 +391,20 @@ mtbls submission metadata-upload MTBLS123 -p ./MTBLS123 -o metadata_upload_respo
 
 Supported ISA-Tab metadata names include `i_*.txt`, `s_*.txt`, `a_*.txt`, and `m_*.tsv`.
 
+#### `mtbls submission delete metadata STUDY_ID`
+
+Delete selected uploaded ISA-Tab metadata files from an existing study.
+
+```bash
+mtbls submission delete metadata MTBLS123 --files i_Investigation.txt,s_MTBLS123.txt
+```
+
+| Name | Required | Kind | Purpose |
+| --- | --- | --- | --- |
+| `STUDY_ID` | Yes | Argument | MetaboLights accession, for example `MTBLS123`. |
+| `--files` | Yes | Option | Comma-separated metadata filenames to delete. |
+| `--base-url` | No | Option | MetaboLights REST API base URL used to select credentials. |
+
 ### 6. Data Preparation And Upload
 
 #### `mtbls submission compress-data-files STUDY_ID`
@@ -396,12 +463,12 @@ Example output:
 }
 ```
 
-#### `mtbls submission upload-data STUDY_ID`
+#### `mtbls submission data-upload STUDY_ID`
 
 Upload local data files to the private FTP area.
 
 ```bash
-mtbls submission upload-data MTBLS123 --data-files-root-path ./MTBLS123/FILES -o data_upload_response.json
+mtbls submission data-upload MTBLS123 --data-files-root-path ./MTBLS123/FILES -o data_upload_response.json
 ```
 
 | Name | Required | Kind | Purpose |
@@ -436,6 +503,25 @@ Example output:
   "errors": []
 }
 ```
+
+#### `mtbls submission check-folders STUDY_ID`
+
+Check local metadata and data folders against MetaboLights submission prerequisites before upload.
+
+```bash
+mtbls submission check-folders MTBLS123 \
+  --metadata-files-path ./MTBLS123 \
+  --data-files-path ./MTBLS123/FILES
+```
+
+| Name | Required | Kind | Purpose |
+| --- | --- | --- | --- |
+| `STUDY_ID` | Yes | Argument | MetaboLights accession, for example `MTBLS123`. |
+| `--default-submission-data-path` | No | Option | Parent folder for default metadata lookup. |
+| `-p`, `--metadata-files-path`, `--metadata-path` | No | Option | Local ISA-Tab metadata directory. Defaults to `<default-submission-data-path>/<study-id>`. |
+| `--data-files-path`, `--data-files-root-path` | No | Option | Local data `FILES` directory. Defaults to `<metadata-files-path>/FILES`. |
+
+The command checks ISA-Tab filename patterns, allowed characters in file and folder names, required investigation/sample/assay files, study title and description, contacts, study factors, protocols, sample-to-assay consistency, `FILES/` data references, local referenced file existence, `.wiff`/`.wiff.scan` pairs, compressed raw data folders, and zip files that contain multiple raw folders. It exits with status code `1` when errors are found and prints a JSON report.
 
 ### 7. Validation
 
@@ -492,7 +578,7 @@ STUDY_ID="MTBLS123"
 STUDY_DIR="./${STUDY_ID}"
 
 mtbls config set --base-url https://www.ebi.ac.uk/metabolights/ws
-mtbls auth login --user "$MTBLS_USER" --password "$MTBLS_PASSWORD"
+mtbls auth login
 
 mtbls submission metadata-upload "$STUDY_ID" \
   -p "$STUDY_DIR" \
@@ -501,7 +587,7 @@ mtbls submission metadata-upload "$STUDY_ID" \
 mtbls submission clean-ftp-temp-files "$STUDY_ID" \
   -o "./reports/ftp_cleanup.json"
 
-mtbls submission upload-data "$STUDY_ID" \
+mtbls submission data-upload "$STUDY_ID" \
   --data-files-root-path "$STUDY_DIR/FILES" \
   --no-progress \
   -o "./reports/data_upload.json"

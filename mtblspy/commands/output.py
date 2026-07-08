@@ -24,9 +24,7 @@ def resolve_json_output_path(output_path, default_directory, default_filename):
         return (path / default_filename).resolve()
     if path_text.endswith(("/", "\\")):
         return (path / default_filename).resolve()
-    if path.is_absolute() or path.parent != Path("."):
-        return path.resolve()
-    return (default_directory / path.name).resolve()
+    return path.resolve()
 
 
 def write_json_file(data, output_path):

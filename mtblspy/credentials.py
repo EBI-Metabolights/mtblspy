@@ -12,6 +12,14 @@ class CredentialStore:
     user_name_username = "user-name"
     base_url_username = "base-url"
 
+    def __init__(self, service_name=None):
+        if service_name:
+            self.service_name = service_name
+
+    @classmethod
+    def for_base_url(cls, base_url):
+        return cls(f"mtblspy-{base_url.strip().rstrip('/')}")
+
     def get_api_token(self):
         return self._get_password(self.api_token_username)
 

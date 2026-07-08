@@ -35,6 +35,7 @@ from mtblspy.commands.submissions.exceptions import SubmissionError
     type=str,
     help="MetaboLights REST API endpoint for this upload, overriding configured defaults.",
 )
+@click.option("--base-url", help="MetaboLights REST API base URL used to select credentials.")
 @click.option(
     "--selected-files",
     type=str,
@@ -44,18 +45,19 @@ from mtblspy.commands.submissions.exceptions import SubmissionError
     "--output",
     "-o",
     type=click.Path(dir_okay=False),
-    help="Save upload options and result as JSON. Filename-only values are saved to the study cache.",
+    help="Save upload options and result as JSON. Filename-only values are saved to the current directory.",
 )
 def upload_metadata(
     study_id,
     default_submission_data_path,
     metadata_files_path,
     mtbls_submission_endpoint,
+    base_url,
     selected_files,
     output,
 ):
     """Upload ISA-Tab metadata files for a study."""
-    normalized_endpoint = normalize_endpoint(mtbls_submission_endpoint)
+    normalized_endpoint = normalize_endpoint(mtbls_submission_endpoint or base_url)
     selected_file_names = parse_selected_metadata_files(selected_files)
     normalized_study_id = normalize_study_id(study_id)
     metadata_path = metadata_files_path or str(

@@ -21,6 +21,6 @@ def login(user_name, password, base_url):
         client = SubmissionClient(base_url=base_url)
         click.echo(f"Logging in with {client.rest_api_base_url}...")
         client.login(user_name, password)
-        click.echo("Login successful. Tokens and user saved to system keyring.")
+        click.echo("Login successful.")
     except Exception as exc:
         raise click.ClickException(str(exc)) from exc

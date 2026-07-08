@@ -8,11 +8,12 @@ from mtblspy.commands.submissions.client import DEFAULT_LOCAL_SUBMISSION_CACHE_P
 
 @click.command(name="ftp-credentials")
 @click.argument("study_id")
-@json_output_option("Save FTP credentials as JSON. Filename-only values are saved to the study cache.")
-def private_ftp_credentials(study_id, output):
+@click.option("--base-url", help="MetaboLights REST API base URL used to select credentials.")
+@json_output_option("Save FTP credentials as JSON. Filename-only values are saved to the current directory.")
+def private_ftp_credentials(study_id, base_url, output):
     """Get private FTP upload credentials for a study."""
     try:
-        client = SubmissionClient()
+        client = SubmissionClient(base_url=base_url)
         details = client.get_private_ftp_credentials(study_id)
     except Exception as exc:
         raise click.ClickException(str(exc)) from exc
