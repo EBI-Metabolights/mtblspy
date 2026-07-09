@@ -1179,6 +1179,41 @@ def test_submission_compress_data_files_can_remove_original_directories(runner, 
 
 def test_submission_check_folders_reports_success_for_valid_local_layout(runner, tmp_path):
     study_path = build_check_folders_study(tmp_path, "MTBLS123")
+    report_path = tmp_path / "folder_check_report.json"
+
+    result = runner.invoke(
+        cli,
+        [
+            "submission",
+            "check-folders",
+            "MTBLS123",
+            "--metadata-files-path",
+            str(study_path),
+            "--data-files-path",
+            str(study_path / "FILES"),
+            "-o",
+            str(report_path),
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = load_stdout_json_prefix(result.output)
+    assert payload["status"] == "success"
+    assert payload["errors"] == []
+    assert payload["summary"]["metadata_files"] == 4
+    assert payload["summary"]["referenced_raw_files"] == 2
+    assert payload["summary"]["referenced_assignment_files"] == 1
+    assert json.loads(report_path.read_text(encoding="utf-8")) == payload
+    assert result.output.rstrip().endswith(f"Folder check report JSON saved to {report_path}")
+
+
+def test_submission_check_folders_saves_report_to_default_cache_without_output(runner, tmp_path, monkeypatch):
+    study_path = build_check_folders_study(tmp_path, "MTBLS123")
+    cache_path = tmp_path / "cache"
+    monkeypatch.setattr(
+        "mtblspy.commands.submissions.submission_check_folders.DEFAULT_LOCAL_SUBMISSION_CACHE_PATH",
+        cache_path,
+    )
 
     result = runner.invoke(
         cli,
@@ -1193,13 +1228,11 @@ def test_submission_check_folders_reports_success_for_valid_local_layout(runner,
         ],
     )
 
+    report_path = cache_path / "MTBLS123" / "MTBLS123_folder_check_report.json"
     assert result.exit_code == 0
     payload = load_stdout_json_prefix(result.output)
-    assert payload["status"] == "success"
-    assert payload["errors"] == []
-    assert payload["summary"]["metadata_files"] == 4
-    assert payload["summary"]["referenced_raw_files"] == 2
-    assert payload["summary"]["referenced_assignment_files"] == 1
+    assert json.loads(report_path.read_text(encoding="utf-8")) == payload
+    assert result.output.rstrip().endswith(f"Folder check report JSON saved to {report_path}")
 
 
 def test_submission_check_folders_reports_folder_and_reference_errors(runner, tmp_path):

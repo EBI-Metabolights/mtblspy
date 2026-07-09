@@ -6,7 +6,9 @@ from pathlib import Path
 
 import click
 
+from mtblspy.commands.output import save_json_output
 from mtblspy.commands.submissions.client import (
+    DEFAULT_LOCAL_SUBMISSION_CACHE_PATH,
     DEFAULT_LOCAL_SUBMISSION_DATA_PATH,
     is_metadata_filename,
     normalize_study_id,
@@ -45,7 +47,13 @@ RAW_FOLDER_SUFFIXES = (".d", ".raw")
     "--data-files-root-path",
     help="Local data FILES directory. Defaults to <metadata-files-path>/FILES.",
 )
-def check_folders(study_id, default_submission_data_path, metadata_files_path, data_files_path):
+@click.option(
+    "--output",
+    "-o",
+    type=click.Path(dir_okay=False),
+    help="Save the folder check report as JSON. Defaults to the local MetaboLights cache folder.",
+)
+def check_folders(study_id, default_submission_data_path, metadata_files_path, data_files_path, output):
     """Check local study folders against MetaboLights submission prerequisites."""
     result = check_submission_folders(
         study_id,
@@ -53,7 +61,9 @@ def check_folders(study_id, default_submission_data_path, metadata_files_path, d
         data_files_path=data_files_path,
         default_submission_data_path=default_submission_data_path,
     )
+    output_path = save_check_folders_output(result, output, result["study_id"])
     click.echo(json.dumps(result, indent=2))
+    click.echo(f"Folder check report JSON saved to {output_path}")
     if result["status"] == "failed":
         raise click.exceptions.Exit(1)
 
@@ -108,6 +118,15 @@ def resolve_data_files_path(data_files_path, metadata_path):
     if data_files_path:
         return Path(data_files_path).expanduser().resolve()
     return (metadata_path / "FILES").resolve()
+
+
+def save_check_folders_output(payload, output, study_id):
+    return save_json_output(
+        payload,
+        output,
+        DEFAULT_LOCAL_SUBMISSION_CACHE_PATH / study_id,
+        f"{study_id}_folder_check_report.json",
+    )
 
 
 def check_metadata_folder(metadata_path, result):

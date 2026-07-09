@@ -1225,7 +1225,7 @@ def test_upload_metadata_uploads_selected_files_and_reports_skipped_files(
     mock_get_api_key.return_value = "valid-key"
     (tmp_path / "i_Investigation.txt").write_text("investigation", encoding="utf-8")
     (tmp_path / "s_MTBLS123.txt").write_text("samples", encoding="utf-8")
-    (tmp_path / "a_assay.txt").write_text("assay", encoding="utf-8")
+    (tmp_path / "a_MTBLS123_assay.txt").write_text("assay", encoding="utf-8")
 
     response = MagicMock()
     response.status_code = 201
@@ -1236,15 +1236,43 @@ def test_upload_metadata_uploads_selected_files_and_reports_skipped_files(
     result = SubmissionClient().upload_metadata(
         "MTBLS123",
         metadata_path=tmp_path,
-        selected_files="i_Investigation.txt,a_assay.txt",
+        selected_files="i_Investigation.txt,a_MTBLS123_assay.txt",
     )
 
-    assert [path.name for path in result.uploaded_files] == ["i_Investigation.txt", "a_assay.txt"]
+    assert [path.name for path in result.uploaded_files] == ["i_Investigation.txt", "a_MTBLS123_assay.txt"]
     assert [path.name for path in result.skipped_files] == ["s_MTBLS123.txt"]
     assert [call.kwargs["files"]["file"][0] for call in mock_post.call_args_list] == [
         "i_Investigation.txt",
-        "a_assay.txt",
+        "a_MTBLS123_assay.txt",
     ]
+
+
+@patch("mtblspy.commands.submissions.client.requests.post")
+@patch("mtblspy.commands.submissions.client.get_api_key")
+@patch("mtblspy.commands.submissions.client.get_base_url")
+def test_upload_metadata_rejects_file_names_for_other_study_before_api_call(
+    mock_get_base_url,
+    mock_get_api_key,
+    mock_post,
+    tmp_path,
+):
+    mock_get_base_url.return_value = "https://wwwdev.ebi.ac.uk/metabolights/ws"
+    (tmp_path / "i_Investigation.txt").write_text("investigation", encoding="utf-8")
+    (tmp_path / "s_MTBLS999.txt").write_text("samples", encoding="utf-8")
+    (tmp_path / "a_MTBLS999_lc-ms.txt").write_text("assay", encoding="utf-8")
+    (tmp_path / "m_MTBLS999.tsv").write_text("maf", encoding="utf-8")
+
+    with pytest.raises(SubmissionAPIError) as exc_info:
+        SubmissionClient().upload_metadata("MTBLS123", metadata_path=tmp_path)
+
+    assert str(exc_info.value) == "Metadata file name validation failed for MTBLS123."
+    assert exc_info.value.errors == [
+        "a_MTBLS999_lc-ms.txt: assay file name must be a_MTBLS123.txt, a_MTBLS123_*.txt, or a_MTBLS123-*.txt.",
+        "m_MTBLS999.tsv: metabolite assignment file name must be m_MTBLS123.tsv, m_MTBLS123_*.tsv, or m_MTBLS123-*.tsv.",
+        "s_MTBLS999.txt: sample file name must be s_MTBLS123.txt.",
+    ]
+    mock_get_api_key.assert_not_called()
+    mock_post.assert_not_called()
 
 
 @patch("mtblspy.commands.submissions.client.requests.post")

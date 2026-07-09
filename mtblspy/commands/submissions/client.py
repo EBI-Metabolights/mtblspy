@@ -1224,9 +1224,46 @@ def resolve_metadata_file_paths(
         names = ", ".join(invalid_names)
         raise SubmissionAPIError(f"Unsupported metadata file name(s): {names}")
 
+    validate_metadata_file_names_for_study(file_paths, study_id)
+
     if return_skipped:
         return file_paths, skipped_files
     return file_paths
+
+
+def validate_metadata_file_names_for_study(file_paths, study_id):
+    errors = []
+    for path in file_paths:
+        error = metadata_filename_study_id_error(path.name, study_id)
+        if error:
+            errors.append(error)
+    if errors:
+        raise SubmissionAPIError(
+            f"Metadata file name validation failed for {normalize_study_id(study_id)}.",
+            errors=errors,
+        )
+
+
+def metadata_filename_study_id_error(file_name, study_id):
+    study_id = normalize_study_id(study_id)
+    if file_name.startswith("i_"):
+        return None
+    if file_name.startswith("s_"):
+        expected_name = f"s_{study_id}.txt"
+        if file_name != expected_name:
+            return f"{file_name}: sample file name must be {expected_name}."
+        return None
+    if file_name.startswith("a_") and not has_study_id_name_part(file_name.removeprefix("a_").removesuffix(".txt"), study_id):
+        return f"{file_name}: assay file name must be a_{study_id}.txt, a_{study_id}_*.txt, or a_{study_id}-*.txt."
+    if file_name.startswith("m_") and not has_study_id_name_part(file_name.removeprefix("m_").removesuffix(".tsv"), study_id):
+        return f"{file_name}: metabolite assignment file name must be m_{study_id}.tsv, m_{study_id}_*.tsv, or m_{study_id}-*.tsv."
+    return None
+
+
+def has_study_id_name_part(name_part, study_id):
+    if name_part == study_id:
+        return True
+    return name_part.startswith(f"{study_id}_") or name_part.startswith(f"{study_id}-")
 
 
 def resolve_data_upload_plan(

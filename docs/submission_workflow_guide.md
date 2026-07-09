@@ -40,7 +40,7 @@ Use this path when you already have valid local ISA-Tab metadata and data files.
 | --- | --- | --- |
 | 1 | `mtbls auth login` | Authenticate with MetaboLights. |
 | 2 | `mtbls submission create` | Create a provisional study from `study_input.json`. |
-| 3 | `mtbls submission check-folders STUDY_ID --metadata-files-path PATH --data-files-path PATH` | Check local metadata and data folder prerequisites. |
+| 3 | `mtbls submission check-folders STUDY_ID --metadata-files-path PATH --data-files-path PATH -o REPORT.json` | Check local metadata and data folder prerequisites. |
 | 4 | `mtbls submission metadata-upload STUDY_ID -p PATH` | Upload ISA-Tab metadata files. |
 | 5 | `mtbls submission data-upload STUDY_ID --data-files-root-path PATH` | Upload data files to private FTP. |
 | 6 | `mtbls submission delete metadata STUDY_ID --files FILES` | Delete selected uploaded metadata files when needed. |
@@ -49,7 +49,7 @@ Use this path when you already have valid local ISA-Tab metadata and data files.
 ```bash
 mtbls auth login
 mtbls submission create --input-file ./study_input.json -o create_response.json
-mtbls submission check-folders MTBLS123 --metadata-files-path ./MTBLS123 --data-files-path ./MTBLS123/FILES
+mtbls submission check-folders MTBLS123 --metadata-files-path ./MTBLS123 --data-files-path ./MTBLS123/FILES -o folder_check_report.json
 mtbls submission metadata-upload MTBLS123 -p ./MTBLS123 -o metadata_upload_response.json
 mtbls submission data-upload MTBLS123 --data-files-root-path ./MTBLS123/FILES -o data_upload_response.json
 mtbls submission validate MTBLS123 --remote-validation -o validation_report.json
@@ -104,7 +104,8 @@ mtbls submission compress-data-files MTBLS123 --study-path ./MTBLS123 --update-m
 # 5. Check local metadata and data folder prerequisites.
 mtbls submission check-folders MTBLS123 \
   --metadata-files-path ./MTBLS123 \
-  --data-files-path ./MTBLS123/FILES
+  --data-files-path ./MTBLS123/FILES \
+  -o folder_check_report.json
 
 # 6. Upload only selected metadata files.
 mtbls submission metadata-upload MTBLS123 \
@@ -389,7 +390,7 @@ mtbls submission metadata-upload MTBLS123 -p ./MTBLS123 -o metadata_upload_respo
 | `--selected-files` | No | Option | Comma-separated metadata filenames to upload. |
 | `-o`, `--output` | No | Option | Save upload parameters and result JSON. |
 
-Supported ISA-Tab metadata names include `i_*.txt`, `s_*.txt`, `a_*.txt`, and `m_*.tsv`.
+Before upload, mtblspy validates selected metadata filenames. Supported ISA-Tab upload names include `i_*.txt`, `s_<study_id>.txt`, `a_<study_id>.txt`, `a_<study_id>_*.txt`, `m_<study_id>.tsv`, and `m_<study_id>_*.tsv`. Sample, assay, and metabolite assignment filenames must match the `STUDY_ID` passed to `metadata-upload`; for example, `MTBLS123` accepts `s_MTBLS123.txt`, `a_MTBLS123_lc-ms.txt`, and `m_MTBLS123.tsv`.
 
 #### `mtbls submission delete metadata STUDY_ID`
 
@@ -520,8 +521,9 @@ mtbls submission check-folders MTBLS123 \
 | `--default-submission-data-path` | No | Option | Parent folder for default metadata lookup. |
 | `-p`, `--metadata-files-path`, `--metadata-path` | No | Option | Local ISA-Tab metadata directory. Defaults to `<default-submission-data-path>/<study-id>`. |
 | `--data-files-path`, `--data-files-root-path` | No | Option | Local data `FILES` directory. Defaults to `<metadata-files-path>/FILES`. |
+| `-o`, `--output` | No | Option | Override the folder check report JSON path. Without this option, the report is saved under the default study cache folder. |
 
-The command checks ISA-Tab filename patterns, allowed characters in file and folder names, required investigation/sample/assay files, study title and description, contacts, study factors, protocols, sample-to-assay consistency, `FILES/` data references, local referenced file existence, `.wiff`/`.wiff.scan` pairs, compressed raw data folders, and zip files that contain multiple raw folders. It exits with status code `1` when errors are found and prints a JSON report.
+The command checks ISA-Tab filename patterns, allowed characters in file and folder names, required investigation/sample/assay files, study title and description, contacts, study factors, protocols, sample-to-assay consistency, `FILES/` data references, local referenced file existence, `.wiff`/`.wiff.scan` pairs, compressed raw data folders, and zip files that contain multiple raw folders. It prints a JSON report, saves it to `~/metabolights_data/submission/cache/<study_id>/<study_id>_folder_check_report.json` by default, lets you override the path with `-o` or `--output`, and exits with status code `1` when errors are found.
 
 ### 7. Validation
 
