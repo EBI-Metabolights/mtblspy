@@ -1,0 +1,8 @@
+INVESTIGATION
+Investigation Identifier	MTBLSXXX
+STUDY
+Study Identifier	MTBLSXXX
+STUDY DESIGN DESCRIPTORS
+Study Design Type	metabolite profiling
+STUDY ASSAYS
+Study Assay File Name	a_MTBLSXXX_lc-ms.txt

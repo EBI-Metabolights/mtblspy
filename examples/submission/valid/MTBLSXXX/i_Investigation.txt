@@ -1,0 +1,25 @@
+INVESTIGATION
+Investigation Identifier	MTBLSXXX
+Investigation Title	Example metabolomics investigation
+Investigation Description	Small example investigation for local submission checks.
+STUDY
+Study Identifier	MTBLSXXX
+Study Title	Example metabolomics study
+Study Description	Small example study with two samples and LC-MS raw data files.
+STUDY DESIGN DESCRIPTORS
+Study Design Type	case control design	time series design	metabolite profiling
+STUDY FACTORS
+Study Factor Name	treatment
+Study Factor Type	treatment
+STUDY PROTOCOLS
+Study Protocol Name	sample collection
+Study Protocol Type	sample collection
+Study Protocol Description	Collect samples for the example study.
+STUDY CONTACTS
+Study Person Last Name	Submitter
+Study Person First Name	Example
+Study Person Email	submitter@example.org
+Study Person Affiliation	Example Institute
+Study Person Roles	principal investigator
+STUDY ASSAYS
+Study Assay File Name	a_MTBLSXXX_lc-ms.txt

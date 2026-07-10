@@ -356,6 +356,8 @@ When paths are not specified, metadata defaults to `~/metabolights_data/submissi
 
 The report includes errors and warnings for metadata filename issues, missing or incomplete required metadata sections, sample-to-assay consistency, data files referenced from metadata, accepted data folder structure, compressed raw data folder requirements, and related submission standards. It prints a JSON report, saves it to `~/metabolights_data/submission/cache/<study_id>/<study_id>_folder_check_report.json` by default, lets you override the path with `-o` or `--output`, and exits with status code `1` when errors are found.
 
+Example submission folders are available under `examples/submission`. See the submission workflow guide for step-by-step instructions to copy an example, replace `MTBLSXXX` with your study ID in folder names, filenames, and metadata content, and run the checks.
+
 ### 6. Run Validation
 
 The `validate` command runs local validation by default. It builds the local validation input from the metadata folder using mtblspy's built-in ISA-Tab reader, then runs the MetaboLights validation policy using OPA and the validation bundle.

@@ -1,0 +1,25 @@
+INVESTIGATION
+Investigation Identifier	MTBLSXXX
+Investigation Title	Invalid filename example
+Investigation Description	Example with invalid filenames and missing data references.
+STUDY
+Study Identifier	MTBLSXXX
+Study Title	Invalid filename study
+Study Description	This study intentionally contains invalid folder-check inputs.
+STUDY DESIGN DESCRIPTORS
+Study Design Type	case control design	time series design	metabolite profiling
+STUDY FACTORS
+Study Factor Name	treatment
+Study Factor Type	treatment
+STUDY PROTOCOLS
+Study Protocol Name	sample collection
+Study Protocol Type	sample collection
+Study Protocol Description	Collect samples for the invalid example.
+STUDY CONTACTS
+Study Person Last Name	Submitter
+Study Person First Name	Example
+Study Person Email	submitter@example.org
+Study Person Affiliation	Example Institute
+Study Person Roles	principal investigator
+STUDY ASSAYS
+Study Assay File Name	a_MTBLSXXX_lc-ms.txt

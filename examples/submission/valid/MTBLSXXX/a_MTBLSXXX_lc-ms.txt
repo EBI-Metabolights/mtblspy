@@ -1,0 +1,3 @@
+Sample Name	Assay Name	Raw Spectral Data File	Metabolite Assignment File
+sample1	assay1	FILES/raw1.raw	m_MTBLSXXX.tsv
+sample2	assay2	FILES/raw2.raw	m_MTBLSXXX.tsv

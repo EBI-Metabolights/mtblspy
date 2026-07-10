@@ -1,0 +1,3 @@
+Source Name	Sample Name	Factor Value[treatment]
+source1	sample1	control
+source2	sample2	treated

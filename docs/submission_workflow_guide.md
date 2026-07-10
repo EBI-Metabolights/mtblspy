@@ -524,6 +524,26 @@ mtbls submission check-folders MTBLSxxx \
 
 The report includes errors and warnings for metadata filename issues, missing or incomplete required metadata sections, sample-to-assay consistency, data files referenced from metadata, accepted data folder structure, compressed raw data folder requirements, and related submission standards. It prints a JSON report, saves it to `~/metabolights_data/submission/cache/<study_id>/<study_id>_folder_check_report.json` by default, lets you override the path with `-o` or `--output`, and exits with status code `1` when errors are found.
 
+Example submission folders are available under `examples/submission`. Use the valid folder to try a complete minimal study, or use the `invalid-*` folders to test validation and error handling scenarios.
+
+To try the valid example as-is:
+
+```bash
+mtbls submission check-folders MTBLSXXX \
+  --metadata-files-path examples/submission/valid/MTBLSXXX \
+  --data-files-path examples/submission/valid/MTBLSXXX/FILES \
+  -o folder_check_report.json
+```
+
+To adapt the example for a real provisional study:
+
+1. Copy `examples/submission/valid/MTBLSXXX` to your working folder.
+2. Rename the copied study folder from `MTBLSXXX` to your assigned study ID, for example `MTBLSxxx` or `REQxxx`.
+3. Rename study-specific files so they use the same study ID: `s_<study_id>.txt`, `a_<study_id>_lc-ms.txt`, and `m_<study_id>.tsv`.
+4. Update the same study ID inside `i_Investigation.txt`, the assay file reference in `i_Investigation.txt`, and the metabolite assignment file references in the assay file.
+5. Replace the example sample, assay, MAF, and data-file content with your own values.
+6. Run `mtbls submission check-folders` before uploading metadata or data.
+
 ### 7. Validation
 
 #### `mtbls submission validate STUDY_ID`

@@ -243,9 +243,8 @@ def has_principal_investigator(contacts):
 def check_sample_assay_consistency(validation_input, result):
     sample_names = []
     for sample_file_name, sample_file in validation_input.get("samples", {}).items():
-        file_sample_names = sample_file.get("sampleNames", [])
-        sample_names.extend(file_sample_names)
         rows = table_rows(sample_file.get("table", {}))
+        sample_names.extend(get_column_values(rows, {"Sample Name"}))
         check_factor_values(sample_file_name, rows, result)
 
     duplicated_sample_names = sorted(name for name, count in Counter(sample_names).items() if count > 1)

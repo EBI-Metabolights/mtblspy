@@ -20,6 +20,8 @@ from mtblspy.commands.submissions.local_validation import LocalValidationResult
 from mtblspy.commands.submissions.models import FtpUploadDetails
 from mtblspy.commands.cli import cli
 
+EXAMPLE_SUBMISSION_ROOT = Path(__file__).resolve().parents[1] / "examples" / "submission"
+
 
 @pytest.fixture
 def runner():
@@ -1178,7 +1180,7 @@ def test_submission_compress_data_files_can_remove_original_directories(runner, 
 
 
 def test_submission_check_folders_reports_success_for_valid_local_layout(runner, tmp_path):
-    study_path = build_check_folders_study(tmp_path, "MTBLS123")
+    study_path = EXAMPLE_SUBMISSION_ROOT / "valid" / "MTBLSXXX"
     report_path = tmp_path / "folder_check_report.json"
 
     result = runner.invoke(
@@ -1186,7 +1188,7 @@ def test_submission_check_folders_reports_success_for_valid_local_layout(runner,
         [
             "submission",
             "check-folders",
-            "MTBLS123",
+            "MTBLSXXX",
             "--metadata-files-path",
             str(study_path),
             "--data-files-path",
@@ -1208,7 +1210,7 @@ def test_submission_check_folders_reports_success_for_valid_local_layout(runner,
 
 
 def test_submission_check_folders_saves_report_to_default_cache_without_output(runner, tmp_path, monkeypatch):
-    study_path = build_check_folders_study(tmp_path, "MTBLS123")
+    study_path = EXAMPLE_SUBMISSION_ROOT / "valid" / "MTBLSXXX"
     cache_path = tmp_path / "cache"
     monkeypatch.setattr(
         "mtblspy.commands.submissions.submission_check_folders.DEFAULT_LOCAL_SUBMISSION_CACHE_PATH",
@@ -1220,7 +1222,7 @@ def test_submission_check_folders_saves_report_to_default_cache_without_output(r
         [
             "submission",
             "check-folders",
-            "MTBLS123",
+            "MTBLSXXX",
             "--metadata-files-path",
             str(study_path),
             "--data-files-path",
@@ -1228,29 +1230,22 @@ def test_submission_check_folders_saves_report_to_default_cache_without_output(r
         ],
     )
 
-    report_path = cache_path / "MTBLS123" / "MTBLS123_folder_check_report.json"
+    report_path = cache_path / "MTBLSXXX" / "MTBLSXXX_folder_check_report.json"
     assert result.exit_code == 0
     payload = load_stdout_json_prefix(result.output)
     assert json.loads(report_path.read_text(encoding="utf-8")) == payload
     assert result.output.rstrip().endswith(f"Folder check report JSON saved to {report_path}")
 
 
-def test_submission_check_folders_reports_folder_and_reference_errors(runner, tmp_path):
-    study_path = build_check_folders_study(tmp_path, "MTBLS123")
-    (study_path / "bad name.txt").write_text("bad\n", encoding="utf-8")
-    (study_path / "FILES" / "bad raw.raw").write_bytes(b"raw-data")
-    (study_path / "a_MTBLS123_lc-ms.txt").write_text(
-        "Sample Name\tAssay Name\tRaw Spectral Data File\tDerived Spectral Data File\tMetabolite Assignment File\n"
-        "sample1\tassay1\tmissing.raw\tFILES/missing-derived.raw\tm_MTBLS123.tsv\n",
-        encoding="utf-8",
-    )
+def test_submission_check_folders_reports_folder_and_reference_errors(runner):
+    study_path = EXAMPLE_SUBMISSION_ROOT / "invalid-bad-names" / "MTBLSXXX"
 
     result = runner.invoke(
         cli,
         [
             "submission",
             "check-folders",
-            "MTBLS123",
+            "MTBLSXXX",
             "--metadata-files-path",
             str(study_path),
             "--data-files-path",
@@ -1268,58 +1263,36 @@ def test_submission_check_folders_reports_folder_and_reference_errors(runner, tm
     assert "referenced_data_file_missing" in error_codes
 
 
-def build_check_folders_study(tmp_path, study_id):
-    study_path = tmp_path / study_id
-    data_path = study_path / "FILES"
-    data_path.mkdir(parents=True)
-    (data_path / "raw1.raw").write_bytes(b"raw-data")
-    (data_path / "raw2.raw").write_bytes(b"raw-data")
-    (study_path / "i_Investigation.txt").write_text(
-        "INVESTIGATION\n"
-        f"Investigation Identifier\t{study_id}\n"
-        "Investigation Title\tValid investigation\n"
-        "Investigation Description\tValid investigation description\n"
-        "STUDY\n"
-        f"Study Identifier\t{study_id}\n"
-        "Study Title\tValid study\n"
-        "Study Description\tValid study description\n"
-        "STUDY DESIGN DESCRIPTORS\n"
-        "Study Design Type\tcase control design\ttime series design\tmetabolite profiling\n"
-        "STUDY FACTORS\n"
-        "Study Factor Name\ttreatment\n"
-        "Study Factor Type\ttreatment\n"
-        "STUDY PROTOCOLS\n"
-        "Study Protocol Name\tsample collection\n"
-        "Study Protocol Type\tsample collection\n"
-        "Study Protocol Description\tCollect samples\n"
-        "STUDY CONTACTS\n"
-        "Study Person Last Name\tSmith\n"
-        "Study Person First Name\tJane\n"
-        "Study Person Email\tjane@example.org\n"
-        "Study Person Affiliation\tExample Institute\n"
-        "Study Person Roles\tprincipal investigator\n"
-        "STUDY ASSAYS\n"
-        f"Study Assay File Name\ta_{study_id}_lc-ms.txt\n",
-        encoding="utf-8",
+def test_submission_check_folders_reports_incomplete_metadata_errors(runner):
+    study_path = EXAMPLE_SUBMISSION_ROOT / "invalid-incomplete-metadata" / "MTBLSXXX"
+
+    result = runner.invoke(
+        cli,
+        [
+            "submission",
+            "check-folders",
+            "MTBLSXXX",
+            "--metadata-files-path",
+            str(study_path),
+            "--data-files-path",
+            str(study_path / "FILES"),
+        ],
     )
-    (study_path / f"s_{study_id}.txt").write_text(
-        "Source Name\tSample Name\tFactor Value[treatment]\n"
-        "source1\tsample1\tcontrol\n"
-        "source2\tsample2\ttreated\n",
-        encoding="utf-8",
-    )
-    (study_path / f"a_{study_id}_lc-ms.txt").write_text(
-        "Sample Name\tAssay Name\tRaw Spectral Data File\tMetabolite Assignment File\n"
-        "sample1\tassay1\tFILES/raw1.raw\tm_MTBLS123.tsv\n"
-        "sample2\tassay2\tFILES/raw2.raw\tm_MTBLS123.tsv\n",
-        encoding="utf-8",
-    )
-    (study_path / "m_MTBLS123.tsv").write_text(
-        "metabolite_identification\tdatabase_identifier\n"
-        "glucose\tHMDB0000122\n",
-        encoding="utf-8",
-    )
-    return study_path
+
+    assert result.exit_code == 1
+    payload = load_stdout_json_prefix(result.output)
+    error_codes = {error["code"] for error in payload["errors"]}
+    warning_codes = {warning["code"] for warning in payload["warnings"]}
+    assert "study_title_missing" in error_codes
+    assert "study_description_missing" in error_codes
+    assert "protocols_missing" in error_codes
+    assert "study_factor_missing" in error_codes
+    assert "study_contacts_missing" in error_codes
+    assert "sample_name_duplicate" in error_codes
+    assert "assay_sample_not_in_sample_file" in error_codes
+    assert "referenced_data_file_missing" in error_codes
+    assert "study_descriptors_incomplete" in warning_codes
+    assert "factor_values_missing" in warning_codes
 
 
 @patch("mtblspy.commands.submissions.submission_validate.run_local_validation")
