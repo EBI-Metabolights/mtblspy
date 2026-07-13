@@ -587,35 +587,3 @@ mtbls submission validate MTBLSxxx --remote-validation -o remote_validation_repo
 | `--poll-interval` | Remote only | Option | Seconds between remote validation polls. |
 | `-o`, `-v`, `--output`, `--validation-file-path`, `--validation_file_path` | No | Option | Save validation report JSON. |
 | `--output-format` | No | Option | Output format. Currently `json`. |
-
-## Recommended Pipeline Pattern
-
-Use explicit file paths and save every JSON response.
-
-```bash
-set -e
-
-STUDY_ID="MTBLSxxx"
-STUDY_DIR="./${STUDY_ID}"
-
-mtbls config set --base-url https://www.ebi.ac.uk/metabolights/ws
-mtbls auth login
-
-mtbls submission metadata-upload "$STUDY_ID" \
-  -p "$STUDY_DIR" \
-  -o "./reports/metadata_upload.json"
-
-mtbls submission clean-ftp-temp-files "$STUDY_ID" \
-  -o "./reports/ftp_cleanup.json"
-
-mtbls submission data-upload "$STUDY_ID" \
-  --data-files-root-path "$STUDY_DIR/FILES" \
-  --no-progress \
-  -o "./reports/data_upload.json"
-
-mtbls submission validate "$STUDY_ID" \
-  --remote-validation \
-  -o "./reports/remote_validation.json"
-```
-
-In automation, parse `status` and `errors` from each saved JSON file before moving to the next step.
