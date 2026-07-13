@@ -1,0 +1,2 @@
+Sample Name	Assay Name	Raw Spectral Data File	Derived Spectral Data File	Metabolite Assignment File
+sample1	assay1	missing.raw	FILES/missing-derived.raw	m_MTBLSXXX.tsv

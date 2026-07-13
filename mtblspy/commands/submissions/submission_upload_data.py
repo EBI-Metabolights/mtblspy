@@ -13,7 +13,7 @@ from mtblspy.commands.submissions.client import (
 from mtblspy.commands.submissions.exceptions import SubmissionError
 
 
-@click.command(name="upload-data")
+@click.command(name="data-upload")
 @click.argument("study_id")
 @click.option(
     "--data-files-root-path",
@@ -41,11 +41,12 @@ from mtblspy.commands.submissions.exceptions import SubmissionError
     type=str,
     help="MetaboLights REST API endpoint for this upload, overriding configured defaults.",
 )
+@click.option("--base-url", help="MetaboLights REST API base URL used to select credentials.")
 @click.option(
     "--output",
     "-o",
     type=click.Path(dir_okay=False),
-    help="Save upload options and result as JSON. Filename-only values are saved to the study cache.",
+    help="Save upload options and result as JSON. Filename-only values are saved to the current directory.",
 )
 @click.option(
     "--progress/--no-progress",
@@ -60,12 +61,13 @@ def upload_data(
     skip_uploaded_files,
     skip_empty_folders,
     mtbls_submission_endpoint,
+    base_url,
     output,
     progress,
 ):
     """Upload study data files to the private FTP area."""
     normalized_study_id = normalize_study_id(study_id)
-    normalized_endpoint = normalize_endpoint(mtbls_submission_endpoint)
+    normalized_endpoint = normalize_endpoint(mtbls_submission_endpoint or base_url)
     selected_file_names = parse_comma_separated_values(selected_files)
     skip_uploaded_file_names = parse_comma_separated_values(skip_uploaded_files)
     skip_empty_folder_names = parse_comma_separated_values(skip_empty_folders)

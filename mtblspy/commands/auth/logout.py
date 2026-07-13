@@ -12,7 +12,11 @@ def logout(base_url):
     """Clear stored MetaboLights authentication credentials."""
     try:
         client = SubmissionClient(base_url=base_url)
-        clear_session(client.rest_api_base_url, client.submission_api_base_url)
+        clear_session(
+            client.rest_api_base_url,
+            client.submission_api_base_url,
+            credential_base_url=client.credential_base_url,
+        )
         click.echo("Logged out. Stored MetaboLights tokens and user cleared from system keyring.")
 
         active_env_vars = [

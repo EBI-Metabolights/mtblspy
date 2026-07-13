@@ -68,6 +68,7 @@ from mtblspy.commands.submissions.local_validation import (
     type=str,
     help="MetaboLights submission REST API endpoint for remote validation, overriding configured defaults.",
 )
+@click.option("--base-url", help="MetaboLights REST API base URL used to select credentials.")
 @click.option(
     "--validation-bundle-path",
     "--mtbls-validation-bundle-path",
@@ -124,7 +125,7 @@ from mtblspy.commands.submissions.local_validation import (
     "-o",
     "-v",
     type=click.Path(dir_okay=False),
-    help="Path to save the validation report JSON. Filename-only values are saved to the study cache.",
+    help="Path to save the validation report JSON. Filename-only values are saved to the current directory.",
 )
 @click.option("--output-format", type=click.Choice(["json"]), default="json", show_default=True, help="Validation output format.")
 def validate_submission(
@@ -137,6 +138,7 @@ def validate_submission(
     mtbls_validation_wasm_url,
     mtbls_validation_endpoint,
     mtbls_submission_endpoint,
+    base_url,
     validation_bundle_path,
     validation_bundle_url,
     refetch_validation_bundle,
@@ -160,6 +162,7 @@ def validate_submission(
                 study_id,
                 output,
                 mtbls_submission_endpoint,
+                base_url,
                 mtbls_validation_endpoint,
                 max_polls,
                 poll_interval,
@@ -192,17 +195,19 @@ def validate_submission(
     report = load_json_report(result.report_path)
     report.setdefault("accession", normalized_study_id)
     click.echo(json.dumps(report, indent=2))
+    click.echo(f"Validation report JSON saved to {result.report_path}")
 
 
 def run_remote_validation(
     study_id,
     output,
     mtbls_submission_endpoint,
+    base_url,
     mtbls_validation_endpoint,
     max_polls,
     poll_interval,
 ):
-    client = SubmissionClient(base_url=normalize_endpoint(mtbls_submission_endpoint))
+    client = SubmissionClient(base_url=normalize_endpoint(mtbls_submission_endpoint or base_url))
     validation_endpoint = normalize_endpoint(mtbls_validation_endpoint)
     if validation_endpoint:
         client.submission_api_base_url = validation_endpoint

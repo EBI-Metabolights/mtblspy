@@ -4,6 +4,7 @@ from mtblspy.config import (
     get_api_key,
     get_base_url,
     get_config,
+    get_credential_base_url,
     get_jwt_token,
     get_refresh_token,
     get_user_name,
@@ -11,6 +12,7 @@ from mtblspy.config import (
     save_jwt_token,
     save_refresh_token,
 )
+from mtblspy.credentials import CredentialStore
 
 
 class FakeCredentialStore:
@@ -93,6 +95,54 @@ def test_save_config_strips_trailing_base_url_slash(monkeypatch):
 
     assert fake_store.base_url == "https://test.com/metabolights/ws"
     assert get_base_url() == "https://test.com/metabolights/ws"
+
+
+def test_credential_store_for_base_url_uses_url_specific_service_name():
+    store = CredentialStore.for_base_url("https://test.com/metabolights/ws/")
+
+    assert store.service_name == "mtblspy-https://test.com/metabolights/ws"
+
+
+def test_default_base_url_uses_default_credential_store():
+    assert get_credential_base_url(DEFAULT_BASE_URL) is None
+
+
+def test_custom_base_url_uses_normalized_credential_base_url():
+    assert (
+        get_credential_base_url("https://test.com/metabolights/ws/")
+        == "https://test.com/metabolights/ws"
+    )
+
+
+def test_save_config_stores_auth_values_in_url_specific_store(monkeypatch):
+    default_store = configure_fake_credentials(monkeypatch)
+
+    class FakeCredentialStoreFactory:
+        stores = {}
+
+        @classmethod
+        def for_base_url(cls, base_url):
+            if base_url not in cls.stores:
+                cls.stores[base_url] = FakeCredentialStore()
+            return cls.stores[base_url]
+
+    monkeypatch.setattr("mtblspy.config.CredentialStore", FakeCredentialStoreFactory)
+
+    save_config(
+        api_key="custom-key",
+        base_url="https://test.com/metabolights/ws",
+        user_name="user@example.org",
+        credential_base_url="https://test.com/metabolights/ws",
+    )
+
+    custom_store = FakeCredentialStoreFactory.stores["https://test.com/metabolights/ws"]
+    assert default_store.base_url == "https://test.com/metabolights/ws"
+    assert default_store.api_token is None
+    assert default_store.user_name is None
+    assert custom_store.api_token == "custom-key"
+    assert custom_store.user_name == "user@example.org"
+    assert get_api_key(credential_base_url="https://test.com/metabolights/ws") == "custom-key"
+    assert get_user_name(credential_base_url="https://test.com/metabolights/ws") == "user@example.org"
 
 
 def test_env_vars_override(monkeypatch):

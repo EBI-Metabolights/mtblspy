@@ -52,7 +52,7 @@ from mtblspy.commands.submissions.local_validation import (
     "-v",
     "-o",
     type=click.Path(dir_okay=False),
-    help="Path to save the local validation report. Filename-only values are saved to the study cache.",
+    help="Path to save the local validation report. Filename-only values are saved to the current directory.",
 )
 @click.option(
     "--config-file",

@@ -53,13 +53,14 @@ from mtblspy.commands.submissions.local_validation import (
     "-v",
     "-o",
     type=click.Path(dir_okay=False),
-    help="Path to save the combined validation debug report. Filename-only values are saved to the study cache.",
+    help="Path to save the combined validation debug report. Filename-only values are saved to the current directory.",
 )
 @click.option(
     "--remote-validation-file-path",
     type=click.Path(dir_okay=False),
     help="Path to save the raw remote validation root-cause report.",
 )
+@click.option("--base-url", help="MetaboLights REST API base URL used to select credentials.")
 @click.option(
     "--local-validation-file-path",
     type=click.Path(dir_okay=False),
@@ -104,6 +105,7 @@ def validation_debug(
     isa_json_file_path,
     validation_file_path,
     remote_validation_file_path,
+    base_url,
     local_validation_file_path,
     local_validation_input_path,
     validation_bundle_path,
@@ -125,7 +127,7 @@ def validation_debug(
         )
         remote_report_path = remote_validation_file_path or str(cache_directory / f"{study_id}_remote_validation_report.json")
 
-        client = SubmissionClient()
+        client = SubmissionClient(base_url=base_url)
         click.echo(f"Creating remote validation root-cause report for {study_id}...")
         remote_result = client.find_validation_root_causes(
             study_id,

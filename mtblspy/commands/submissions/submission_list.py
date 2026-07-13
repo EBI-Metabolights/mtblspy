@@ -5,11 +5,12 @@ from mtblspy.commands.submissions.client import DEFAULT_LOCAL_SUBMISSION_CACHE_P
 
 
 @click.command(name="list")
-@json_output_option("Save the studies list as JSON. Filename-only values are saved to the submission cache.")
-def list_submissions(output):
+@click.option("--base-url", help="MetaboLights REST API base URL used to select credentials.")
+@json_output_option("Save the studies list as JSON. Filename-only values are saved to the current directory.")
+def list_submissions(base_url, output):
     """List studies created by the user."""
     try:
-        client = SubmissionClient()
+        client = SubmissionClient(base_url=base_url)
         click.echo(f"Fetching studies from {client.rest_api_base_url}/studies/user...")
         studies = client.list_studies()
     except Exception as exc:
