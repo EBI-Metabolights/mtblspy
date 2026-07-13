@@ -1,5 +1,7 @@
 import json
+import time
 import zipfile
+from base64 import urlsafe_b64encode
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -31,6 +33,13 @@ def runner():
 def load_stdout_json_prefix(output):
     payload, _index = json.JSONDecoder().raw_decode(output)
     return payload
+
+
+def make_jwt(payload):
+    def encode(data):
+        return urlsafe_b64encode(json.dumps(data).encode("utf-8")).decode("ascii").rstrip("=")
+
+    return f"{encode({'alg': 'none'})}.{encode(payload)}."
 
 
 def test_cli_help(runner):
@@ -115,6 +124,40 @@ def test_auth_login_prompts_for_missing_values(mock_client_cls, runner):
     assert result.exit_code == 0
     assert "Please enter your MetaboLights username or email" in result.output
     client.login.assert_called_once_with("user@example.org", "password")
+
+
+@patch("mtblspy.commands.auth.login.SubmissionClient")
+def test_auth_login_accepts_jwt_token(mock_client_cls, runner):
+    client = MagicMock()
+    client.rest_api_base_url = "https://wwwdev.ebi.ac.uk/metabolights/ws"
+    mock_client_cls.return_value = client
+    jwt_token = make_jwt({"email": "user@example.org", "exp": time.time() + 3600})
+
+    result = runner.invoke(
+        cli,
+        ["auth", "login", "--jwt-token", jwt_token],
+    )
+
+    assert result.exit_code == 0
+    assert "Login successful." in result.output
+    client.login_with_jwt.assert_called_once_with(jwt_token)
+    client.login.assert_not_called()
+
+
+@patch("mtblspy.commands.auth.login.SubmissionClient")
+def test_auth_login_jwt_ignores_username_password(mock_client_cls, runner):
+    client = MagicMock()
+    client.rest_api_base_url = "https://wwwdev.ebi.ac.uk/metabolights/ws"
+    mock_client_cls.return_value = client
+
+    result = runner.invoke(
+        cli,
+        ["auth", "login", "--jwt-token", "jwt-token", "--user", "user@example.org"],
+    )
+
+    assert result.exit_code == 0
+    client.login_with_jwt.assert_called_once_with("jwt-token")
+    client.login.assert_not_called()
 
 
 @patch("mtblspy.commands.auth.logout.clear_session")
@@ -373,6 +416,13 @@ def test_submission_templates_help_shows_child_command(runner):
     assert "isa-tab-file" in result.output
     assert "result-file" in result.output
     assert "Create a sample study creation JSON input file." in result.output
+
+
+def test_submission_templates_is_shown_in_public_submission_help(runner):
+    result = runner.invoke(cli, ["submission", "-h"])
+
+    assert result.exit_code == 0
+    assert "templates" in result.output
 
 
 @patch("mtblspy.commands.submissions.template_files.requests.get")
@@ -1263,7 +1313,7 @@ def test_submission_check_folders_reports_folder_and_reference_errors(runner):
     assert "referenced_data_file_missing" in error_codes
 
 
-def test_submission_check_folders_reports_incomplete_metadata_errors(runner):
+def test_submission_check_folders_leaves_metadata_completeness_to_validate(runner):
     study_path = EXAMPLE_SUBMISSION_ROOT / "invalid-incomplete-metadata" / "MTBLSXXX"
 
     result = runner.invoke(
@@ -1283,16 +1333,16 @@ def test_submission_check_folders_reports_incomplete_metadata_errors(runner):
     payload = load_stdout_json_prefix(result.output)
     error_codes = {error["code"] for error in payload["errors"]}
     warning_codes = {warning["code"] for warning in payload["warnings"]}
-    assert "study_title_missing" in error_codes
-    assert "study_description_missing" in error_codes
-    assert "protocols_missing" in error_codes
-    assert "study_factor_missing" in error_codes
-    assert "study_contacts_missing" in error_codes
-    assert "sample_name_duplicate" in error_codes
-    assert "assay_sample_not_in_sample_file" in error_codes
     assert "referenced_data_file_missing" in error_codes
-    assert "study_descriptors_incomplete" in warning_codes
-    assert "factor_values_missing" in warning_codes
+    assert "study_title_missing" not in error_codes
+    assert "study_description_missing" not in error_codes
+    assert "protocols_missing" not in error_codes
+    assert "study_factor_missing" not in error_codes
+    assert "study_contacts_missing" not in error_codes
+    assert "sample_name_duplicate" not in error_codes
+    assert "assay_sample_not_in_sample_file" not in error_codes
+    assert "study_descriptors_incomplete" not in warning_codes
+    assert "factor_values_missing" not in warning_codes
 
 
 @patch("mtblspy.commands.submissions.submission_validate.run_local_validation")

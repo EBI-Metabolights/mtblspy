@@ -179,10 +179,17 @@ Authenticate with MetaboLights.
 mtbls auth login --user user@example.org --password 'secret'
 ```
 
+Or store an existing submission API JWT token:
+
+```bash
+mtbls auth login --jwt-token "$MTBLS_JWT_TOKEN"
+```
+
 | Name | Required | Kind | Purpose |
 | --- | --- | --- | --- |
 | `--user`, `--username` | No | Option | MetaboLights username or email. If omitted, prompts interactively. |
 | `--password` | No | Option | MetaboLights password. If omitted, prompts interactively. |
+| `--jwt-token` | No | Option | Existing submission API JWT token. When provided, username and password are not required. |
 | `--base-url` | No | Option | API base URL for this login. Defaults to saved config or production. |
 
 Example output:
@@ -506,7 +513,7 @@ Example output:
 
 #### `mtbls submission check-folders STUDY_ID`
 
-Check local metadata and data folders against MetaboLights submission prerequisites before upload. This command checks metadata filename formats, metadata completeness, data references, and local data file/folder standards.
+Check local metadata and data folders against MetaboLights submission prerequisites before upload. This command checks metadata filename formats, referenced metadata/data files, and local data file/folder standards. Use `mtbls submission validate` for ISA-Tab content completeness and rule validation.
 
 ```bash
 mtbls submission check-folders MTBLSxxx \
@@ -522,7 +529,7 @@ mtbls submission check-folders MTBLSxxx \
 | `--data-files-path`, `--data-files-root-path` | No | Option | Local data `FILES` directory. Defaults to `<metadata-files-path>/FILES`. |
 | `-o`, `--output` | No | Option | Override the folder check report JSON path. Without this option, the report is saved under the default study cache folder. |
 
-The report includes errors and warnings for metadata filename issues, missing or incomplete required metadata sections, sample-to-assay consistency, data files referenced from metadata, accepted data folder structure, compressed raw data folder requirements, and related submission standards. It prints a JSON report, saves it to `~/metabolights_data/submission/cache/<study_id>/<study_id>_folder_check_report.json` by default, lets you override the path with `-o` or `--output`, and exits with status code `1` when errors are found.
+The report includes errors and warnings for metadata filename issues, missing required local metadata files, metadata/data file references, accepted data folder structure, compressed raw data folder requirements, and related file/folder standards. It prints a JSON report, saves it to `~/metabolights_data/submission/cache/<study_id>/<study_id>_folder_check_report.json` by default, lets you override the path with `-o` or `--output`, and exits with status code `1` when errors are found.
 
 Example submission folders are available under `examples/submission`. Use the valid folder to try a complete minimal study, or use the `invalid-*` folders to test validation and error handling scenarios.
 

@@ -110,8 +110,10 @@ class SubmissionClient:
         self.api_token = api_token
 
     def get_auth_headers(self):
-        api_token = self.require_api_token()
-        return {"user-token": api_token}
+        api_token = self.api_token or get_api_key(credential_base_url=self.credential_base_url)
+        if api_token:
+            return {"user-token": api_token.strip()}
+        return self.get_submission_headers()
 
     def get_submission_headers(self, force_refresh=False):
         jwt_token = None if force_refresh else get_jwt_token(
@@ -372,6 +374,26 @@ class SubmissionClient:
     def password_login(self, user_name, password):
         """Backward-compatible alias for username/password login."""
         self.login(user_name, password)
+
+    def login_with_jwt(self, jwt_token):
+        """Store an existing submission API JWT for subsequent commands."""
+        jwt_token = normalize_bearer_token(jwt_token)
+        if not jwt_token:
+            raise AuthenticationError("JWT token cannot be empty.")
+        if is_jwt_expired(jwt_token):
+            raise AuthenticationError("JWT token is expired.")
+
+        user_name = get_user_name_from_jwt(jwt_token)
+        save_config(
+            base_url=self.rest_api_base_url,
+            user_name=user_name,
+            credential_base_url=self.credential_base_url,
+        )
+        save_jwt_token(
+            self.submission_api_base_url,
+            jwt_token,
+            credential_base_url=self.credential_base_url,
+        )
 
     def fetch_api_token_from_accounts(self, jwt_token):
         accounts_url = f"{self.rest_api_base_url.rstrip('/')}/auth/accounts"
@@ -1875,21 +1897,43 @@ def save_refresh_token_from_response(submission_api_base_url, response, credenti
 
 
 def is_jwt_expired(jwt_token, leeway_seconds=60):
-    parts = jwt_token.split(".")
-    if len(parts) != 3:
-        return False
-
-    payload = parts[1]
-    payload += "=" * (-len(payload) % 4)
-    try:
-        data = json.loads(base64.urlsafe_b64decode(payload.encode("ascii")).decode("utf-8"))
-    except (ValueError, TypeError):
+    data = decode_jwt_payload(jwt_token)
+    if not data:
         return False
 
     exp = data.get("exp")
     if not isinstance(exp, (int, float)):
         return False
     return exp <= time.time() + leeway_seconds
+
+
+def normalize_bearer_token(token):
+    token = (token or "").strip()
+    if token.lower().startswith("bearer "):
+        return token.split(" ", 1)[1].strip()
+    return token
+
+
+def decode_jwt_payload(jwt_token):
+    parts = jwt_token.split(".")
+    if len(parts) != 3:
+        return {}
+
+    payload = parts[1]
+    payload += "=" * (-len(payload) % 4)
+    try:
+        return json.loads(base64.urlsafe_b64decode(payload.encode("ascii")).decode("utf-8"))
+    except (ValueError, TypeError):
+        return {}
+
+
+def get_user_name_from_jwt(jwt_token):
+    data = decode_jwt_payload(jwt_token)
+    for claim in ("email", "preferred_username", "upn", "sub"):
+        value = data.get(claim)
+        if value:
+            return str(value)
+    return None
 
 
 def get_studies_from_user_response(response_data):

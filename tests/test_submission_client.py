@@ -1,6 +1,8 @@
 import json
 import posixpath
+import time
 from ftplib import error_perm
+from base64 import urlsafe_b64encode
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -21,6 +23,13 @@ from mtblspy.commands.submissions.client import (
 )
 from mtblspy.commands.submissions.exceptions import AuthenticationError, SubmissionAPIError
 from mtblspy.commands.submissions.models import StudyInputFormat
+
+
+def make_jwt(payload):
+    def encode(data):
+        return urlsafe_b64encode(json.dumps(data).encode("utf-8")).decode("ascii").rstrip("=")
+
+    return f"{encode({'alg': 'none'})}.{encode(payload)}."
 
 
 @patch("mtblspy.commands.submissions.client.save_refresh_token")
@@ -148,6 +157,49 @@ def test_login_fetches_api_token_from_accounts_when_login_token_empty(
         "refresh-token",
         credential_base_url=None,
     )
+
+
+@patch("mtblspy.commands.submissions.client.save_jwt_token")
+@patch("mtblspy.commands.submissions.client.save_config")
+@patch("mtblspy.commands.submissions.client.get_base_url")
+def test_login_with_jwt_stores_token_and_claim_user(
+    mock_get_base_url,
+    mock_save_config,
+    mock_save_jwt_token,
+):
+    mock_get_base_url.return_value = "https://wwwdev.ebi.ac.uk/metabolights/ws"
+    jwt_token = make_jwt({"email": "user@example.org", "exp": time.time() + 3600})
+
+    SubmissionClient().login_with_jwt(f"Bearer {jwt_token}")
+
+    mock_save_config.assert_called_once_with(
+        base_url="https://wwwdev.ebi.ac.uk/metabolights/ws",
+        user_name="user@example.org",
+        credential_base_url="https://wwwdev.ebi.ac.uk/metabolights/ws",
+    )
+    mock_save_jwt_token.assert_called_once_with(
+        "https://wwwdev.ebi.ac.uk/metabolights/ws3",
+        jwt_token,
+        credential_base_url="https://wwwdev.ebi.ac.uk/metabolights/ws",
+    )
+
+
+@patch("mtblspy.commands.submissions.client.save_jwt_token")
+@patch("mtblspy.commands.submissions.client.save_config")
+@patch("mtblspy.commands.submissions.client.get_base_url")
+def test_login_with_jwt_rejects_expired_token(
+    mock_get_base_url,
+    mock_save_config,
+    mock_save_jwt_token,
+):
+    mock_get_base_url.return_value = "https://www.ebi.ac.uk/metabolights/ws"
+    jwt_token = make_jwt({"email": "user@example.org", "exp": time.time() - 3600})
+
+    with pytest.raises(AuthenticationError, match="JWT token is expired"):
+        SubmissionClient().login_with_jwt(jwt_token)
+
+    mock_save_config.assert_not_called()
+    mock_save_jwt_token.assert_not_called()
 
 
 @patch("mtblspy.commands.submissions.client.requests.post")
@@ -353,6 +405,27 @@ def test_download_target_paths_default_to_local_submission_data_path(tmp_path, m
 
     assert resolve_download_target_path(None, "MTBLS123") == tmp_path / "MTBLS123"
     assert resolve_data_download_target_path(None, "MTBLS123") == tmp_path / "MTBLS123" / "FILES"
+
+
+@patch("mtblspy.commands.submissions.client.get_refresh_token")
+@patch("mtblspy.commands.submissions.client.get_jwt_token")
+@patch("mtblspy.commands.submissions.client.get_api_key")
+@patch("mtblspy.commands.submissions.client.get_base_url")
+def test_get_auth_headers_uses_stored_jwt_when_api_token_missing(
+    mock_get_base_url,
+    mock_get_api_key,
+    mock_get_jwt_token,
+    mock_get_refresh_token,
+):
+    mock_get_base_url.return_value = "https://wwwdev.ebi.ac.uk/metabolights/ws"
+    mock_get_api_key.return_value = None
+    mock_get_jwt_token.return_value = make_jwt({"email": "user@example.org", "exp": time.time() + 3600})
+    mock_get_refresh_token.return_value = None
+
+    headers = SubmissionClient().get_auth_headers()
+
+    assert headers["accept"] == "application/json"
+    assert headers["Authorization"].startswith("Bearer ")
 
 
 @patch("mtblspy.commands.submissions.client.requests.get")
