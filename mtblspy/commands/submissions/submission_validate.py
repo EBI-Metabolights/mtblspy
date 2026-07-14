@@ -7,7 +7,6 @@ from mtblspy.commands.submissions.client import (
     DEFAULT_LOCAL_SUBMISSION_DATA_PATH,
     VALIDATION_MAX_POLLS,
     VALIDATION_POLL_INTERVAL_SECONDS,
-    SubmissionClient,
     normalize_study_id,
 )
 from mtblspy.commands.submissions.local_validation import (
