@@ -22,7 +22,7 @@ def login(user_name, password, jwt_token, base_url):
         client = SubmissionClient(base_url=base_url)
         click.echo(f"Logging in with {client.rest_api_base_url}...")
         if jwt_token:
-            client.login_with_jwt(jwt_token)
+            client.login_with_jwt(jwt_token, fetch_api_token=True)
         else:
             client.login(user_name, password)
         click.echo("Login successful.")

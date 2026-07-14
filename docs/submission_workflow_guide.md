@@ -185,6 +185,8 @@ Or store an existing submission API JWT token:
 mtbls auth login --jwt-token "$MTBLS_JWT_TOKEN"
 ```
 
+Alternatively, you can pass `--jwt-token "$MTBLS_JWT_TOKEN"` directly to any `mtbls submission` command. This will authenticate the client, fetch the API token in the background, and seamlessly store both tokens for subsequent commands to use.
+
 | Name | Required | Kind | Purpose |
 | --- | --- | --- | --- |
 | `--user`, `--username` | No | Option | MetaboLights username or email. If omitted, prompts interactively. |

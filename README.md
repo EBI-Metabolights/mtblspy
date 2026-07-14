@@ -69,11 +69,13 @@ Login with your MetaboLights username or email and password:
 mtbls auth login --user user@example.org --password "your-password"
 ```
 
-You can also login with an existing submission API JWT token. This stores the JWT in keyring and lets later commands use bearer authentication without a username or password:
+You can also login with an existing submission API JWT token. This stores the JWT and lets later commands use bearer authentication without a username or password:
 
 ```bash
 mtbls auth login --jwt-token "$MTBLS_JWT_TOKEN"
 ```
+
+Alternatively, you can pass `--jwt-token "$MTBLS_JWT_TOKEN"` directly to any `mtbls submission` command. This will authenticate the client, fetch the API token in the background, and seamlessly store both tokens for subsequent commands to use.
 
 If values are omitted, the CLI prompts for them:
 

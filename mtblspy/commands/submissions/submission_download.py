@@ -4,7 +4,7 @@ from pathlib import Path
 import click
 from tqdm import tqdm
 
-from mtblspy.commands.submissions.client import SubmissionClient
+from mtblspy.commands.submissions.cli_utils import create_submission_client, jwt_token_option
 from mtblspy.commands.submissions.exceptions import SubmissionError
 
 
@@ -31,12 +31,13 @@ def download_submission(ctx, study_id):
     type=click.Path(file_okay=False),
     help="Directory to save metadata files. Defaults to the local MetaboLights data folder.",
 )
+@jwt_token_option
 @click.pass_context
-def download_metadata(ctx, base_url, selected_files, target_path):
+def download_metadata(ctx, base_url, selected_files, target_path, jwt_token):
     """Download ISA-Tab metadata files and result files."""
     study_id = ctx.obj["study_id"]
     try:
-        client = SubmissionClient(base_url=base_url)
+        client = create_submission_client(base_url=base_url, jwt_token=jwt_token)
         result = client.download_metadata_files(
             study_id,
             target_path=target_path,
@@ -77,8 +78,9 @@ def download_metadata(ctx, base_url, selected_files, target_path):
     show_default=True,
     help="Show an interactive progress bar on stderr while downloading.",
 )
+@jwt_token_option
 @click.pass_context
-def download_data(ctx, base_url, selected_files, download_all, target_path, progress):
+def download_data(ctx, base_url, selected_files, download_all, target_path, progress, jwt_token):
     """Download study data files from the private FTP area."""
     study_id = ctx.obj["study_id"]
     progress_bar = DataDownloadProgress(enabled=progress and is_progress_stream_interactive())
@@ -90,7 +92,7 @@ def download_data(ctx, base_url, selected_files, download_all, target_path, prog
                 "Data download requires --files because study data files can be large. "
                 "Use --files with comma-separated file or folder names, or pass --all to download all data files."
             )
-        client = SubmissionClient(base_url=base_url)
+        client = create_submission_client(base_url=base_url, jwt_token=jwt_token)
         download_kwargs = {
             "target_path": target_path,
             "selected_files": selected_files,
