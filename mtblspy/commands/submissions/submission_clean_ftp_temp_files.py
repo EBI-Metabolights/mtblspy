@@ -7,7 +7,7 @@ from mtblspy.commands.submissions.client import (
     DEFAULT_LOCAL_SUBMISSION_CACHE_PATH,
     normalize_study_id,
 )
-from mtblspy.commands.submissions.cli_utils import create_submission_client, jwt_token_option
+from mtblspy.commands.submissions.cli_utils import create_submission_client, get_submission_client, jwt_token_option
 from mtblspy.commands.submissions.exceptions import SubmissionError
 
 
@@ -26,13 +26,14 @@ from mtblspy.commands.submissions.exceptions import SubmissionError
     help="Save cleanup options and result as JSON. Filename-only values are saved to the current directory.",
 )
 @jwt_token_option
-def clean_ftp_temp_files(study_id, mtbls_submission_endpoint, base_url, output, jwt_token):
+@click.pass_context
+def clean_ftp_temp_files(ctx, study_id, mtbls_submission_endpoint, base_url, output, jwt_token):
     """Delete incomplete .ftp_ temporary files from the study private FTP area."""
     normalized_study_id = normalize_study_id(study_id)
     normalized_endpoint = normalize_endpoint(mtbls_submission_endpoint or base_url)
 
     try:
-        client = create_submission_client(base_url=normalized_endpoint, jwt_token=jwt_token)
+        client = get_submission_client(ctx, base_url=normalized_endpoint, jwt_token=jwt_token, factory=create_submission_client)
         result = client.clear_ftp_temporary_files(study_id)
     except SubmissionError as exc:
         resolved_endpoint = client.rest_api_base_url if "client" in locals() else normalized_endpoint

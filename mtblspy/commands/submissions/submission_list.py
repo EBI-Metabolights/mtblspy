@@ -1,7 +1,7 @@
 import click
 
 from mtblspy.commands.output import json_output_option, save_json_output
-from mtblspy.commands.submissions.cli_utils import create_submission_client, jwt_token_option
+from mtblspy.commands.submissions.cli_utils import create_submission_client, get_submission_client, jwt_token_option
 from mtblspy.commands.submissions.client import DEFAULT_LOCAL_SUBMISSION_CACHE_PATH
 
 
@@ -9,10 +9,11 @@ from mtblspy.commands.submissions.client import DEFAULT_LOCAL_SUBMISSION_CACHE_P
 @click.option("--base-url", help="MetaboLights REST API base URL used to select credentials.")
 @jwt_token_option
 @json_output_option("Save the studies list as JSON. Filename-only values are saved to the current directory.")
-def list_submissions(base_url, jwt_token, output):
+@click.pass_context
+def list_submissions(ctx, base_url, jwt_token, output):
     """List studies created by the user."""
     try:
-        client = create_submission_client(base_url=base_url, jwt_token=jwt_token)
+        client = get_submission_client(ctx, base_url=base_url, jwt_token=jwt_token, factory=create_submission_client)
         click.echo(f"Fetching studies from {client.rest_api_base_url}/studies/user...")
         studies = client.list_studies()
     except Exception as exc:

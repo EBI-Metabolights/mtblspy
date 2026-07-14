@@ -1,7 +1,7 @@
 import click
 
 from mtblspy.commands.output import resolve_json_output_path, write_json_file
-from mtblspy.commands.submissions.cli_utils import echo_validation_errors, create_submission_client, jwt_token_option
+from mtblspy.commands.submissions.cli_utils import echo_validation_errors, create_submission_client, get_submission_client, jwt_token_option
 from mtblspy.commands.submissions.client import (
     DEFAULT_LOCAL_SUBMISSION_CACHE_PATH,
     VALIDATION_MAX_POLLS,
@@ -98,7 +98,9 @@ from mtblspy.commands.submissions.local_validation import (
 )
 @click.option("--timeout", default=LOCAL_VALIDATION_TIMEOUT_SECONDS, show_default=True, help="Local OPA timeout in seconds.")
 @jwt_token_option
+@click.pass_context
 def validation_debug(
+    ctx,
     study_id,
     metadata_path,
     data_files_path,
@@ -128,7 +130,7 @@ def validation_debug(
         )
         remote_report_path = remote_validation_file_path or str(cache_directory / f"{study_id}_remote_validation_report.json")
 
-        client = create_submission_client(base_url=base_url, jwt_token=jwt_token)
+        client = get_submission_client(ctx, base_url=base_url, jwt_token=jwt_token, factory=create_submission_client)
         click.echo(f"Creating remote validation root-cause report for {study_id}...")
         remote_result = client.find_validation_root_causes(
             study_id,

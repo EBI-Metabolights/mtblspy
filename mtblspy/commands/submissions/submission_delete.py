@@ -2,7 +2,7 @@ import json
 
 import click
 
-from mtblspy.commands.submissions.cli_utils import create_submission_client, jwt_token_option
+from mtblspy.commands.submissions.cli_utils import create_submission_client, get_submission_client, jwt_token_option
 from mtblspy.commands.submissions.exceptions import SubmissionAPIError, SubmissionError
 
 
@@ -21,10 +21,11 @@ def delete_submission():
     help="Comma-separated metadata filenames to delete.",
 )
 @jwt_token_option
-def delete_metadata(study_id, base_url, selected_files, jwt_token):
+@click.pass_context
+def delete_metadata(ctx, study_id, base_url, selected_files, jwt_token):
     """Delete ISA-Tab metadata files from a study."""
     try:
-        client = create_submission_client(base_url=base_url, jwt_token=jwt_token)
+        client = get_submission_client(ctx, base_url=base_url, jwt_token=jwt_token, factory=create_submission_client)
         result = client.delete_metadata_files(
             study_id,
             selected_files=selected_files,

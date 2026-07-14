@@ -15,7 +15,7 @@ from mtblspy.commands.submissions.local_validation import (
     LOCAL_VALIDATION_TIMEOUT_SECONDS,
     run_local_validation,
 )
-from mtblspy.commands.submissions.cli_utils import create_submission_client, jwt_token_option
+from mtblspy.commands.submissions.cli_utils import create_submission_client, get_submission_client, jwt_token_option
 
 
 @click.command(name="validate", short_help="Run study validation.")
@@ -129,7 +129,9 @@ from mtblspy.commands.submissions.cli_utils import create_submission_client, jwt
 )
 @click.option("--output-format", help="Validation output format.")
 @jwt_token_option
+@click.pass_context
 def validate_submission(
+    ctx,
     study_id,
     default_submission_data_path,
     metadata_files_path,
@@ -161,6 +163,7 @@ def validate_submission(
     try:
         if remote_validation:
             result = run_remote_validation(
+                ctx,
                 study_id,
                 output,
                 mtbls_submission_endpoint,
@@ -202,6 +205,7 @@ def validate_submission(
 
 
 def run_remote_validation(
+    ctx,
     study_id,
     output,
     mtbls_submission_endpoint,
@@ -211,7 +215,12 @@ def run_remote_validation(
     poll_interval,
     jwt_token,
 ):
-    client = create_submission_client(base_url=normalize_endpoint(mtbls_submission_endpoint or base_url), jwt_token=jwt_token)
+    client = get_submission_client(
+        ctx,
+        base_url=normalize_endpoint(mtbls_submission_endpoint or base_url),
+        jwt_token=jwt_token,
+        factory=create_submission_client,
+    )
     validation_endpoint = normalize_endpoint(mtbls_validation_endpoint)
     if validation_endpoint:
         client.submission_api_base_url = validation_endpoint
