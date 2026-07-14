@@ -147,7 +147,7 @@ class SubmissionClient:
         api_token = self.api_token or get_api_key(credential_base_url=self.credential_base_url)
         if not api_token:
             raise AuthenticationError(
-                "Not logged in. Please run 'mtbls auth login' first."
+                "Not logged in. Please run 'mtbls auth login' first or re-run the command with --jwt-token option."
             )
         jwt_token = self.exchange_api_token_for_jwt(api_token.strip())
         save_jwt_token(

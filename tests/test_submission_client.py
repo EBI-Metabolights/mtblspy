@@ -80,17 +80,17 @@ def test_login_fetches_api_token_jwt_and_refresh_token(
         api_key="valid-key",
         base_url="https://wwwdev.ebi.ac.uk/metabolights/ws",
         user_name="user@example.org",
-        credential_base_url="https://wwwdev.ebi.ac.uk/metabolights/ws",
+        credential_base_url=None,
     )
     mock_save_jwt_token.assert_called_once_with(
         "https://wwwdev.ebi.ac.uk/metabolights/ws3",
         "jwt-token",
-        credential_base_url="https://wwwdev.ebi.ac.uk/metabolights/ws",
+        credential_base_url=None,
     )
     mock_save_refresh_token.assert_called_once_with(
         "https://wwwdev.ebi.ac.uk/metabolights/ws3",
         "refresh-token",
-        credential_base_url="https://wwwdev.ebi.ac.uk/metabolights/ws",
+        credential_base_url=None,
     )
 
 
@@ -145,17 +145,17 @@ def test_login_fetches_api_token_from_accounts_when_login_token_empty(
         api_key="valid-key",
         base_url="https://www.ebi.ac.uk/metabolights/ws",
         user_name="user@example.org",
-        credential_base_url=None,
+        credential_base_url="https://www.ebi.ac.uk/metabolights/ws",
     )
     mock_save_jwt_token.assert_called_once_with(
         "https://www.ebi.ac.uk/metabolights/ws3",
         "jwt-token",
-        credential_base_url=None,
+        credential_base_url="https://www.ebi.ac.uk/metabolights/ws",
     )
     mock_save_refresh_token.assert_called_once_with(
         "https://www.ebi.ac.uk/metabolights/ws3",
         "refresh-token",
-        credential_base_url=None,
+        credential_base_url="https://www.ebi.ac.uk/metabolights/ws",
     )
 
 
@@ -175,12 +175,12 @@ def test_login_with_jwt_stores_token_and_claim_user(
     mock_save_config.assert_called_once_with(
         base_url="https://wwwdev.ebi.ac.uk/metabolights/ws",
         user_name="user@example.org",
-        credential_base_url="https://wwwdev.ebi.ac.uk/metabolights/ws",
+        credential_base_url=None,
     )
     mock_save_jwt_token.assert_called_once_with(
         "https://wwwdev.ebi.ac.uk/metabolights/ws3",
         jwt_token,
-        credential_base_url="https://wwwdev.ebi.ac.uk/metabolights/ws",
+        credential_base_url=None,
     )
 
 
@@ -526,7 +526,7 @@ def test_get_submission_headers_exchanges_and_saves_jwt(
     mock_save_jwt_token.assert_called_once_with(
         "https://wwwdev.ebi.ac.uk/metabolights/ws3",
         "jwt-token",
-        credential_base_url="https://wwwdev.ebi.ac.uk/metabolights/ws",
+        credential_base_url=None,
     )
     mock_post.assert_called_once_with(
         "https://wwwdev.ebi.ac.uk/metabolights/ws3/auth/v1/token",
@@ -618,7 +618,7 @@ def test_get_submission_headers_falls_back_to_keycloak_when_ws3_auth_fails(
     mock_save_jwt_token.assert_called_once_with(
         "https://wwwdev.ebi.ac.uk/metabolights/ws3",
         "jwt-token",
-        credential_base_url="https://wwwdev.ebi.ac.uk/metabolights/ws",
+        credential_base_url=None,
     )
 
 
@@ -667,12 +667,12 @@ def test_get_submission_headers_refreshes_with_stored_refresh_token(
     mock_save_jwt_token.assert_called_once_with(
         "https://wwwdev.ebi.ac.uk/metabolights/ws3",
         "fresh-jwt-token",
-        credential_base_url="https://wwwdev.ebi.ac.uk/metabolights/ws",
+        credential_base_url=None,
     )
     mock_save_refresh_token.assert_called_once_with(
         "https://wwwdev.ebi.ac.uk/metabolights/ws3",
         "new-refresh-token",
-        credential_base_url="https://wwwdev.ebi.ac.uk/metabolights/ws",
+        credential_base_url=None,
     )
 
 
@@ -712,7 +712,7 @@ def test_refresh_jwt_token_falls_back_to_keycloak_when_ws3_refresh_fails(
     mock_save_refresh_token.assert_called_once_with(
         "https://wwwdev.ebi.ac.uk/metabolights/ws3",
         "new-refresh-token",
-        credential_base_url="https://wwwdev.ebi.ac.uk/metabolights/ws",
+        credential_base_url=None,
     )
 
 
@@ -854,7 +854,7 @@ def test_validate_study_refreshes_jwt_after_unauthorized_start(
     mock_save_jwt_token.assert_called_once_with(
         "https://wwwdev.ebi.ac.uk/metabolights/ws3",
         "fresh-jwt-token",
-        credential_base_url="https://wwwdev.ebi.ac.uk/metabolights/ws",
+        credential_base_url=None,
     )
     assert mock_post.call_args_list[0].kwargs["headers"] == {
         "accept": "application/json",
