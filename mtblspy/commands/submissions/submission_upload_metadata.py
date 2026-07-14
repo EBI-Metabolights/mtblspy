@@ -10,7 +10,7 @@ from mtblspy.commands.submissions.client import (
     normalize_study_id,
     parse_selected_metadata_files,
 )
-from mtblspy.commands.submissions.cli_utils import create_submission_client, jwt_token_option
+from mtblspy.commands.submissions.cli_utils import create_submission_client, get_submission_client, jwt_token_option
 from mtblspy.commands.submissions.exceptions import SubmissionError
 
 
@@ -48,7 +48,9 @@ from mtblspy.commands.submissions.exceptions import SubmissionError
     help="Save upload options and result as JSON. Filename-only values are saved to the current directory.",
 )
 @jwt_token_option
+@click.pass_context
 def upload_metadata(
+    ctx,
     study_id,
     default_submission_data_path,
     metadata_files_path,
@@ -67,7 +69,7 @@ def upload_metadata(
     )
 
     try:
-        client = create_submission_client(base_url=normalized_endpoint, jwt_token=jwt_token)
+        client = get_submission_client(ctx, base_url=normalized_endpoint, jwt_token=jwt_token, factory=create_submission_client)
         result = client.upload_metadata(
             study_id,
             metadata_path=metadata_files_path,

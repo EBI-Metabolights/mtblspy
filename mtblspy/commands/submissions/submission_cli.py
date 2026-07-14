@@ -1,5 +1,6 @@
 import click
 
+from mtblspy.commands.submissions.cli_utils import ensure_submission_context
 from mtblspy.commands.submissions.submission_compress_data_files import compress_data_files
 from mtblspy.commands.submissions.submission_check_folders import check_folders
 from mtblspy.commands.submissions.submission_clean_ftp_temp_files import clean_ftp_temp_files
@@ -16,8 +17,10 @@ from mtblspy.commands.submissions.submission_validation_debug import validation_
 
 
 @click.group(name="submission")
-def submission_cli():
+@click.pass_context
+def submission_cli(ctx):
     """Commands to use MetaboLights study submission REST API."""
+    ensure_submission_context(ctx)
 
 
 submission_cli.add_command(list_submissions)
