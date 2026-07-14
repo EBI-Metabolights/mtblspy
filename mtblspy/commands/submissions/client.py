@@ -375,7 +375,7 @@ class SubmissionClient:
         """Backward-compatible alias for username/password login."""
         self.login(user_name, password)
 
-    def login_with_jwt(self, jwt_token):
+    def login_with_jwt(self, jwt_token, fetch_api_token=False):
         """Store an existing submission API JWT for subsequent commands."""
         jwt_token = normalize_bearer_token(jwt_token)
         if not jwt_token:
@@ -384,16 +384,30 @@ class SubmissionClient:
             raise AuthenticationError("JWT token is expired.")
 
         user_name = get_user_name_from_jwt(jwt_token)
-        save_config(
+        api_token = None
+        if fetch_api_token:
+            api_token = self.try_fetch_api_token_from_jwt(jwt_token)
+        config_values = dict(
             base_url=self.rest_api_base_url,
             user_name=user_name,
             credential_base_url=self.credential_base_url,
+        )
+        if api_token:
+            config_values["api_key"] = api_token
+        save_config(
+            **config_values,
         )
         save_jwt_token(
             self.submission_api_base_url,
             jwt_token,
             credential_base_url=self.credential_base_url,
         )
+
+    def try_fetch_api_token_from_jwt(self, jwt_token):
+        try:
+            return self.fetch_api_token_from_accounts(jwt_token)
+        except Exception:
+            return None
 
     def fetch_api_token_from_accounts(self, jwt_token):
         accounts_url = f"{self.rest_api_base_url.rstrip('/')}/auth/accounts"
