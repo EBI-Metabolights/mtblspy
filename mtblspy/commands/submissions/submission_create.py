@@ -4,14 +4,15 @@ import os
 import click
 
 from mtblspy.commands.output import json_output_option, save_json_output
-from mtblspy.commands.submissions.cli_utils import get_created_study_id
-from mtblspy.commands.submissions.client import DEFAULT_LOCAL_SUBMISSION_CACHE_PATH, SubmissionClient
+from mtblspy.commands.submissions.cli_utils import create_submission_client, get_created_study_id, jwt_token_option
+from mtblspy.commands.submissions.client import DEFAULT_LOCAL_SUBMISSION_CACHE_PATH
 from mtblspy.commands.submissions.exceptions import SubmissionAPIError
 from mtblspy.commands.submissions.models import StudyInputFormat
 
 
 @click.command(name="create", short_help="Create a provisional study.")
 @click.option("--base-url", help="MetaboLights REST API base URL used to select credentials.")
+@jwt_token_option
 @click.option(
     "--input-file",
     type=click.Path(exists=True, dir_okay=False, resolve_path=True),
@@ -27,14 +28,14 @@ from mtblspy.commands.submissions.models import StudyInputFormat
     help="Study creation input format.",
 )
 @json_output_option("Save the study creation response as JSON. Filename-only values are saved to the current directory.")
-def create_submission(base_url, input_file, input_format, output):
+def create_submission(base_url, jwt_token, input_file, input_format, output):
     """
     Create a new provisional study from a study creation request.
 
     If no input file is provided, it defaults to metabolights-data/submission/data/study_input.json.
     """
     try:
-        client = SubmissionClient(base_url=base_url)
+        client = create_submission_client(base_url=base_url, jwt_token=jwt_token)
         click.echo(f"Creating provisional study from {input_format} input: {input_file}...")
         result = client.create_study(input_file, StudyInputFormat(input_format))
     except SubmissionAPIError as exc:

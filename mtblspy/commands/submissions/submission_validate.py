@@ -7,7 +7,6 @@ from mtblspy.commands.submissions.client import (
     DEFAULT_LOCAL_SUBMISSION_DATA_PATH,
     VALIDATION_MAX_POLLS,
     VALIDATION_POLL_INTERVAL_SECONDS,
-    SubmissionClient,
     normalize_study_id,
 )
 from mtblspy.commands.submissions.local_validation import (
@@ -16,6 +15,7 @@ from mtblspy.commands.submissions.local_validation import (
     LOCAL_VALIDATION_TIMEOUT_SECONDS,
     run_local_validation,
 )
+from mtblspy.commands.submissions.cli_utils import create_submission_client, jwt_token_option
 
 
 @click.command(name="validate", short_help="Run study validation.")
@@ -127,7 +127,8 @@ from mtblspy.commands.submissions.local_validation import (
     type=click.Path(dir_okay=False),
     help="Path to save the validation report JSON. Filename-only values are saved to the current directory.",
 )
-@click.option("--output-format", type=click.Choice(["json"]), default="json", show_default=True, help="Validation output format.")
+@click.option("--output-format", help="Validation output format.")
+@jwt_token_option
 def validate_submission(
     study_id,
     default_submission_data_path,
@@ -151,6 +152,7 @@ def validate_submission(
     timeout,
     output,
     output_format,
+    jwt_token,
 ):
     """Run local validation by default, or remote validation with --remote-validation."""
     del output_format
@@ -166,6 +168,7 @@ def validate_submission(
                 mtbls_validation_endpoint,
                 max_polls,
                 poll_interval,
+                jwt_token,
             )
         else:
             if not data_files_root_path:
@@ -206,8 +209,9 @@ def run_remote_validation(
     mtbls_validation_endpoint,
     max_polls,
     poll_interval,
+    jwt_token,
 ):
-    client = SubmissionClient(base_url=normalize_endpoint(mtbls_submission_endpoint or base_url))
+    client = create_submission_client(base_url=normalize_endpoint(mtbls_submission_endpoint or base_url), jwt_token=jwt_token)
     validation_endpoint = normalize_endpoint(mtbls_validation_endpoint)
     if validation_endpoint:
         client.submission_api_base_url = validation_endpoint

@@ -2,7 +2,22 @@ from pathlib import Path
 
 import click
 
-from mtblspy.commands.submissions.client import format_validation_error
+from mtblspy.commands.submissions.client import SubmissionClient, format_validation_error
+
+
+def jwt_token_option(function):
+    return click.option(
+        "--jwt-token",
+        envvar="MTBLS_JWT_TOKEN",
+        help="Existing submission API JWT token to use and store for this command.",
+    )(function)
+
+
+def create_submission_client(base_url=None, jwt_token=None):
+    client = SubmissionClient(base_url=base_url)
+    if jwt_token:
+        client.login_with_jwt(jwt_token, fetch_api_token=True)
+    return client
 
 
 def echo_validation_errors(errors, err=False):

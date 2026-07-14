@@ -1,7 +1,6 @@
 import json
 import re
 import zipfile
-from collections import Counter
 from pathlib import Path
 
 import click
@@ -102,11 +101,8 @@ def check_submission_folders(study_id, metadata_files_path=None, data_files_path
 
     if validation_input:
         update_summary(result, validation_input)
-        check_investigation_completeness(validation_input, result)
-        check_sample_assay_consistency(validation_input, result)
         check_assay_file_references(validation_input, metadata_path, data_path, result)
 
-    check_wiff_pairs(data_path, result)
     check_zip_raw_folder_contents(data_path, result)
     result["errors"] = deduplicate_checks(result["errors"])
     result["warnings"] = deduplicate_checks(result["warnings"])
@@ -204,80 +200,6 @@ def update_summary(result, validation_input):
     result["summary"]["referenced_assignment_files"] = len(validation_input.get("referencedAssignmentFiles", []))
 
 
-def check_investigation_completeness(validation_input, result):
-    investigation = validation_input.get("investigation", {})
-    studies = investigation.get("studies") or []
-    study = studies[0] if studies else {}
-    if not (study.get("title") or investigation.get("title")):
-        add_error(result, "study_title_missing", validation_input.get("investigationFilePath"), "Study title is missing from the investigation file.")
-    if not (study.get("description") or investigation.get("description")):
-        add_error(result, "study_description_missing", validation_input.get("investigationFilePath"), "Study abstract or description is missing from the investigation file.")
-
-    descriptors = study.get("studyDesignDescriptors", {}).get("designTypes", [])
-    if len(descriptors) < 3:
-        add_warning(result, "study_descriptors_incomplete", validation_input.get("investigationFilePath"), "Add at least three study descriptors or keywords.")
-
-    protocols = study.get("studyProtocols", {}).get("protocols", [])
-    if not protocols:
-        add_error(result, "protocols_missing", validation_input.get("investigationFilePath"), "At least one study protocol is required.")
-
-    factors = study.get("studyFactors", {}).get("factors", [])
-    if not factors:
-        add_error(result, "study_factor_missing", validation_input.get("investigationFilePath"), "At least one study factor is required.")
-
-    contacts = study.get("studyContacts", {}).get("people", [])
-    if not contacts:
-        add_error(result, "study_contacts_missing", validation_input.get("investigationFilePath"), "At least one study contact is required.")
-    elif not has_principal_investigator(contacts):
-        add_warning(result, "principal_investigator_missing", validation_input.get("investigationFilePath"), "Add a principal investigator contact.")
-
-
-def has_principal_investigator(contacts):
-    for contact in contacts:
-        for role in contact.get("roles", []):
-            if "principal investigator" in str(role.get("term", "")).lower():
-                return True
-    return False
-
-
-def check_sample_assay_consistency(validation_input, result):
-    sample_names = []
-    for sample_file_name, sample_file in validation_input.get("samples", {}).items():
-        rows = table_rows(sample_file.get("table", {}))
-        sample_names.extend(get_column_values(rows, {"Sample Name"}))
-        check_factor_values(sample_file_name, rows, result)
-
-    duplicated_sample_names = sorted(name for name, count in Counter(sample_names).items() if count > 1)
-    for sample_name in duplicated_sample_names:
-        add_error(result, "sample_name_duplicate", sample_name, f"Sample name is duplicated: {sample_name}")
-
-    known_samples = set(sample_names)
-    assay_sample_names = []
-    for assay_file_name, assay_file in validation_input.get("assays", {}).items():
-        current_assay_samples = assay_file.get("sampleNames", [])
-        assay_sample_names.extend(current_assay_samples)
-        missing_samples = sorted(set(current_assay_samples) - known_samples)
-        for sample_name in missing_samples:
-            add_error(result, "assay_sample_not_in_sample_file", assay_file_name, f"Assay references sample not present in sample files: {sample_name}")
-
-    unreferenced_samples = sorted(known_samples - set(assay_sample_names))
-    for sample_name in unreferenced_samples:
-        add_warning(result, "sample_not_referenced_by_assay", sample_name, f"Sample is not referenced by any assay file: {sample_name}")
-
-
-def check_factor_values(sample_file_name, rows, result):
-    factor_columns = [column for row in rows for column in row if column.startswith("Factor Value[")]
-    if not factor_columns:
-        add_warning(result, "factor_values_missing", sample_file_name, "Sample file has no Factor Value[...] column.")
-        return
-    for column in sorted(set(factor_columns)):
-        values = {row.get(column, "") for row in rows if row.get(column, "")}
-        if not values:
-            add_warning(result, "factor_values_empty", sample_file_name, f"Factor column has no values: {column}")
-        elif len(rows) >= 2 and len(values) < 2:
-            add_warning(result, "factor_values_not_different", sample_file_name, f"At least two rows should have different values for {column}.")
-
-
 def check_assay_file_references(validation_input, metadata_path, data_path, result):
     referenced_assignment_files = set()
     referenced_data_files = set()
@@ -304,19 +226,6 @@ def check_assay_file_references(validation_input, metadata_path, data_path, resu
         add_warning(result, "data_files_not_referenced", metadata_path, "No raw or derived data files are referenced from assay files.")
     if not referenced_assignment_files:
         add_warning(result, "assignment_files_not_referenced", metadata_path, "No metabolite assignment files are referenced from assay files.")
-
-
-def check_wiff_pairs(data_path, result):
-    if not data_path.exists() or not data_path.is_dir():
-        return
-    files_by_lower_path = {str(path.relative_to(data_path)).lower(): path for path in data_path.rglob("*") if path.is_file()}
-    for lower_relative_path, path in files_by_lower_path.items():
-        if lower_relative_path.endswith(".wiff") and f"{lower_relative_path}.scan" not in files_by_lower_path:
-            add_error(result, "wiff_scan_missing", path, ".wiff files must be submitted with the matching .wiff.scan file.")
-        elif lower_relative_path.endswith(".wiff.scan"):
-            wiff_path = lower_relative_path.removesuffix(".scan")
-            if wiff_path not in files_by_lower_path:
-                add_error(result, "wiff_missing", path, ".wiff.scan files must be submitted with the matching .wiff file.")
 
 
 def check_zip_raw_folder_contents(data_path, result):

@@ -69,6 +69,14 @@ Login with your MetaboLights username or email and password:
 mtbls auth login --user user@example.org --password "your-password"
 ```
 
+You can also login with an existing submission API JWT token. This stores the JWT and lets later commands use bearer authentication without a username or password:
+
+```bash
+mtbls auth login --jwt-token "$MTBLS_JWT_TOKEN"
+```
+
+Alternatively, you can pass `--jwt-token "$MTBLS_JWT_TOKEN"` directly to any `mtbls submission` command. This will authenticate the client, fetch the API token in the background, and seamlessly store both tokens for subsequent commands to use.
+
 If values are omitted, the CLI prompts for them:
 
 ```bash
@@ -343,7 +351,7 @@ mtbls submission delete metadata MTBLSxxx --files i_Investigation.txt,s_MTBLSxxx
 
 ### 5. Check Local Folders
 
-Check local ISA-Tab metadata and data folders before upload. This command checks study submission prerequisites, metadata filename formats, metadata completeness, data references, and local data file/folder standards before you upload files.
+Check local ISA-Tab metadata and data folders before upload. This command checks study submission prerequisites, metadata filename formats, referenced metadata/data files, and local data file/folder standards before you upload files. Use `mtbls submission validate` for ISA-Tab content completeness and rule validation.
 
 ```bash
 mtbls submission check-folders MTBLSxxx \
@@ -354,7 +362,7 @@ mtbls submission check-folders MTBLSxxx \
 
 When paths are not specified, metadata defaults to `~/metabolights_data/submission/data/<study_id>` and data defaults to `<metadata-files-path>/FILES`.
 
-The report includes errors and warnings for metadata filename issues, missing or incomplete required metadata sections, sample-to-assay consistency, data files referenced from metadata, accepted data folder structure, compressed raw data folder requirements, and related submission standards. It prints a JSON report, saves it to `~/metabolights_data/submission/cache/<study_id>/<study_id>_folder_check_report.json` by default, lets you override the path with `-o` or `--output`, and exits with status code `1` when errors are found.
+The report includes errors and warnings for metadata filename issues, missing required local metadata files, metadata/data file references, accepted data folder structure, compressed raw data folder requirements, and related file/folder standards. It prints a JSON report, saves it to `~/metabolights_data/submission/cache/<study_id>/<study_id>_folder_check_report.json` by default, lets you override the path with `-o` or `--output`, and exits with status code `1` when errors are found.
 
 Example submission folders are available under `examples/submission`. See the submission workflow guide for step-by-step instructions to copy an example, replace `MTBLSXXX` with your study ID in folder names, filenames, and metadata content, and run the checks.
 
@@ -757,7 +765,7 @@ mtbls --help
 
 | Command | Description |
 | --- | --- |
-| `mtbls auth login` | Login with username/email and password |
+| `mtbls auth login` | Login with username/email and password, or with a JWT token |
 | `mtbls auth logout` | Clear stored credentials |
 
 ### Configuration
@@ -800,7 +808,7 @@ Use `-h` or `--help` with any command to see the same options in the terminal.
 
 | Command | Arguments | Options |
 | --- | --- | --- |
-| `mtbls auth login` | None | `--user`, `--username`, `--password`, `--base-url` |
+| `mtbls auth login` | None | `--user`, `--username`, `--password`, `--jwt-token`, `--base-url` |
 | `mtbls auth logout` | None | `--base-url` |
 
 #### Configuration Options

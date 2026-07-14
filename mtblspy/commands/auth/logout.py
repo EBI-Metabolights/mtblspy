@@ -17,7 +17,7 @@ def logout(base_url):
             client.submission_api_base_url,
             credential_base_url=client.credential_base_url,
         )
-        click.echo("Logged out. Stored MetaboLights tokens and user cleared from system keyring.")
+        click.echo("Logged out. Stored MetaboLights tokens and user cleared from system.")
 
         active_env_vars = [
             name

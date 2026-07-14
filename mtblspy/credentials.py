@@ -3,7 +3,7 @@ from keyring.errors import KeyringError, PasswordDeleteError
 
 
 class CredentialStorageError(RuntimeError):
-    """Raised when credentials cannot be read from or written to keyring."""
+    """Raised when credentials cannot be read or saved or deleted."""
 
 
 class CredentialStore:
@@ -74,13 +74,13 @@ class CredentialStore:
         try:
             return keyring.get_password(self.service_name, username)
         except KeyringError as exc:
-            raise CredentialStorageError(f"Unable to read credentials from keyring: {exc}") from exc
+            raise CredentialStorageError(f"Unable to read credentials: {exc}") from exc
 
     def _set_password(self, username, password):
         try:
             keyring.set_password(self.service_name, username, password)
         except KeyringError as exc:
-            raise CredentialStorageError(f"Unable to save credentials to keyring: {exc}") from exc
+            raise CredentialStorageError(f"Unable to save credentials: {exc}") from exc
 
     def _delete_password(self, username):
         try:
@@ -88,7 +88,7 @@ class CredentialStore:
         except PasswordDeleteError:
             pass
         except KeyringError as exc:
-            raise CredentialStorageError(f"Unable to delete credentials from keyring: {exc}") from exc
+            raise CredentialStorageError(f"Unable to delete credentials: {exc}") from exc
 
     @staticmethod
     def _jwt_username(rest_api_base_url):

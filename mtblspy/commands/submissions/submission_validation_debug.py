@@ -1,12 +1,11 @@
 import click
 
 from mtblspy.commands.output import resolve_json_output_path, write_json_file
-from mtblspy.commands.submissions.cli_utils import echo_validation_errors
+from mtblspy.commands.submissions.cli_utils import echo_validation_errors, create_submission_client, jwt_token_option
 from mtblspy.commands.submissions.client import (
     DEFAULT_LOCAL_SUBMISSION_CACHE_PATH,
     VALIDATION_MAX_POLLS,
     VALIDATION_POLL_INTERVAL_SECONDS,
-    SubmissionClient,
     get_validation_error_field,
     get_validation_error_message,
     get_validation_error_rule,
@@ -98,6 +97,7 @@ from mtblspy.commands.submissions.local_validation import (
     help="Seconds between validation status checks.",
 )
 @click.option("--timeout", default=LOCAL_VALIDATION_TIMEOUT_SECONDS, show_default=True, help="Local OPA timeout in seconds.")
+@jwt_token_option
 def validation_debug(
     study_id,
     metadata_path,
@@ -115,6 +115,7 @@ def validation_debug(
     max_polls,
     poll_interval,
     timeout,
+    jwt_token,
 ):
     """Developer helper: compare remote validation with optional local validation."""
     try:
@@ -127,7 +128,7 @@ def validation_debug(
         )
         remote_report_path = remote_validation_file_path or str(cache_directory / f"{study_id}_remote_validation_report.json")
 
-        client = SubmissionClient(base_url=base_url)
+        client = create_submission_client(base_url=base_url, jwt_token=jwt_token)
         click.echo(f"Creating remote validation root-cause report for {study_id}...")
         remote_result = client.find_validation_root_causes(
             study_id,

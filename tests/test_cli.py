@@ -1,5 +1,7 @@
 import json
+import time
 import zipfile
+from base64 import urlsafe_b64encode
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -31,6 +33,13 @@ def runner():
 def load_stdout_json_prefix(output):
     payload, _index = json.JSONDecoder().raw_decode(output)
     return payload
+
+
+def make_jwt(payload):
+    def encode(data):
+        return urlsafe_b64encode(json.dumps(data).encode("utf-8")).decode("ascii").rstrip("=")
+
+    return f"{encode({'alg': 'none'})}.{encode(payload)}."
 
 
 def test_cli_help(runner):
@@ -117,6 +126,40 @@ def test_auth_login_prompts_for_missing_values(mock_client_cls, runner):
     client.login.assert_called_once_with("user@example.org", "password")
 
 
+@patch("mtblspy.commands.auth.login.SubmissionClient")
+def test_auth_login_accepts_jwt_token(mock_client_cls, runner):
+    client = MagicMock()
+    client.rest_api_base_url = "https://wwwdev.ebi.ac.uk/metabolights/ws"
+    mock_client_cls.return_value = client
+    jwt_token = make_jwt({"email": "user@example.org", "exp": time.time() + 3600})
+
+    result = runner.invoke(
+        cli,
+        ["auth", "login", "--jwt-token", jwt_token],
+    )
+
+    assert result.exit_code == 0
+    assert "Login successful." in result.output
+    client.login_with_jwt.assert_called_once_with(jwt_token, fetch_api_token=True)
+    client.login.assert_not_called()
+
+
+@patch("mtblspy.commands.auth.login.SubmissionClient")
+def test_auth_login_jwt_ignores_username_password(mock_client_cls, runner):
+    client = MagicMock()
+    client.rest_api_base_url = "https://wwwdev.ebi.ac.uk/metabolights/ws"
+    mock_client_cls.return_value = client
+
+    result = runner.invoke(
+        cli,
+        ["auth", "login", "--jwt-token", "jwt-token", "--user", "user@example.org"],
+    )
+
+    assert result.exit_code == 0
+    client.login_with_jwt.assert_called_once_with("jwt-token", fetch_api_token=True)
+    client.login.assert_not_called()
+
+
 @patch("mtblspy.commands.auth.logout.clear_session")
 @patch("mtblspy.commands.auth.logout.SubmissionClient")
 def test_auth_logout_clears_current_session(mock_client_cls, mock_clear_session, runner):
@@ -200,7 +243,7 @@ def test_config_set_saves_base_url(mock_get_config, mock_save_config, runner):
     assert "Base URL saved: https://wwwdev.ebi.ac.uk/metabolights/ws" in result.output
 
 
-@patch("mtblspy.commands.submissions.submission_list.SubmissionClient")
+@patch("mtblspy.commands.submissions.submission_list.create_submission_client")
 def test_submission_list_success(mock_client_cls, runner):
     client = MagicMock()
     client.rest_api_base_url = "https://wwwdev.ebi.ac.uk/metabolights/ws"
@@ -212,13 +255,13 @@ def test_submission_list_success(mock_client_cls, runner):
     result = runner.invoke(cli, ["submission", "list", "--base-url", "https://wwwdev.ebi.ac.uk/metabolights/ws"])
 
     assert result.exit_code == 0
-    mock_client_cls.assert_called_once_with(base_url="https://wwwdev.ebi.ac.uk/metabolights/ws")
+    mock_client_cls.assert_called_once_with(base_url="https://wwwdev.ebi.ac.uk/metabolights/ws", jwt_token=None)
     assert "MTBLS123" in result.output
     assert "Private" in result.output
     assert "Test Study" in result.output
 
 
-@patch("mtblspy.commands.submissions.submission_list.SubmissionClient")
+@patch("mtblspy.commands.submissions.submission_list.create_submission_client")
 def test_submission_list_writes_json_output(mock_client_cls, runner, tmp_path, monkeypatch):
     monkeypatch.setattr("mtblspy.commands.submissions.submission_list.DEFAULT_LOCAL_SUBMISSION_CACHE_PATH", tmp_path)
     monkeypatch.chdir(tmp_path)
@@ -237,7 +280,7 @@ def test_submission_list_writes_json_output(mock_client_cls, runner, tmp_path, m
     assert f"Studies JSON saved to {output_file}" in result.output
 
 
-@patch("mtblspy.commands.submissions.submission_create.SubmissionClient")
+@patch("mtblspy.commands.submissions.submission_create.create_submission_client")
 def test_submission_create_json_success(mock_client_cls, runner, tmp_path):
     input_file = tmp_path / "study-create.json"
     input_file.write_text(
@@ -269,12 +312,12 @@ def test_submission_create_json_success(mock_client_cls, runner, tmp_path):
     )
 
     assert result.exit_code == 0
-    mock_client_cls.assert_called_once_with(base_url="https://wwwdev.ebi.ac.uk/metabolights/ws")
+    mock_client_cls.assert_called_once_with(base_url="https://wwwdev.ebi.ac.uk/metabolights/ws", jwt_token=None)
     assert "Study created successfully: MTBLS-NEW" in result.output
     client.create_study.assert_called_once()
 
 
-@patch("mtblspy.commands.submissions.submission_create.SubmissionClient")
+@patch("mtblspy.commands.submissions.submission_create.create_submission_client")
 def test_submission_create_failure_prints_server_response_details(mock_client_cls, runner, tmp_path):
     input_file = tmp_path / "study-create.json"
     input_file.write_text(
@@ -310,7 +353,7 @@ def test_submission_create_failure_prints_server_response_details(mock_client_cl
     assert "contacts[0].email: must be a valid email address" in result.output
 
 
-@patch("mtblspy.commands.submissions.submission_create.SubmissionClient")
+@patch("mtblspy.commands.submissions.submission_create.create_submission_client")
 def test_submission_create_writes_json_output(mock_client_cls, runner, tmp_path, monkeypatch):
     monkeypatch.setattr("mtblspy.commands.submissions.submission_create.DEFAULT_LOCAL_SUBMISSION_CACHE_PATH", tmp_path)
     monkeypatch.chdir(tmp_path)
@@ -373,6 +416,13 @@ def test_submission_templates_help_shows_child_command(runner):
     assert "isa-tab-file" in result.output
     assert "result-file" in result.output
     assert "Create a sample study creation JSON input file." in result.output
+
+
+def test_submission_templates_is_shown_in_public_submission_help(runner):
+    result = runner.invoke(cli, ["submission", "-h"])
+
+    assert result.exit_code == 0
+    assert "templates" in result.output
 
 
 @patch("mtblspy.commands.submissions.template_files.requests.get")
@@ -511,7 +561,7 @@ def test_submission_templates_result_file_uses_default_maf_type(mock_get, runner
     )
 
 
-@patch("mtblspy.commands.submissions.submission_ftp_credentials.SubmissionClient")
+@patch("mtblspy.commands.submissions.submission_ftp_credentials.create_submission_client")
 def test_submission_ftp_credentials_success(mock_client_cls, runner):
     client = MagicMock()
     client.get_private_ftp_credentials.return_value = FtpUploadDetails(
@@ -529,13 +579,13 @@ def test_submission_ftp_credentials_success(mock_client_cls, runner):
     )
 
     assert result.exit_code == 0
-    mock_client_cls.assert_called_once_with(base_url="https://wwwdev.ebi.ac.uk/metabolights/ws")
+    mock_client_cls.assert_called_once_with(base_url="https://wwwdev.ebi.ac.uk/metabolights/ws", jwt_token=None)
     assert "ftp-private.ebi.ac.uk" in result.output
     assert "ftp-password" in result.output
     client.get_private_ftp_credentials.assert_called_once_with("MTBLS123")
 
 
-@patch("mtblspy.commands.submissions.submission_ftp_credentials.SubmissionClient")
+@patch("mtblspy.commands.submissions.submission_ftp_credentials.create_submission_client")
 def test_submission_ftp_credentials_writes_json_output(mock_client_cls, runner, tmp_path, monkeypatch):
     monkeypatch.setattr(
         "mtblspy.commands.submissions.submission_ftp_credentials.DEFAULT_LOCAL_SUBMISSION_CACHE_PATH",
@@ -560,7 +610,7 @@ def test_submission_ftp_credentials_writes_json_output(mock_client_cls, runner, 
     assert f"FTP credentials JSON saved to {output_file}" in result.output
 
 
-@patch("mtblspy.commands.submissions.submission_download.SubmissionClient")
+@patch("mtblspy.commands.submissions.submission_download.create_submission_client")
 def test_submission_download_metadata_uses_base_url_and_files(mock_client_cls, runner, tmp_path):
     downloaded_file = tmp_path / "i_Investigation.txt"
     client = MagicMock()
@@ -589,7 +639,7 @@ def test_submission_download_metadata_uses_base_url_and_files(mock_client_cls, r
     )
 
     assert result.exit_code == 0
-    mock_client_cls.assert_called_once_with(base_url="https://wwwdev.ebi.ac.uk/metabolights/ws")
+    mock_client_cls.assert_called_once_with(base_url="https://wwwdev.ebi.ac.uk/metabolights/ws", jwt_token=None)
     client.download_metadata_files.assert_called_once_with(
         "MTBLS123",
         target_path=str(tmp_path),
@@ -600,7 +650,7 @@ def test_submission_download_metadata_uses_base_url_and_files(mock_client_cls, r
     assert payload["downloaded_files"] == [str(downloaded_file)]
 
 
-@patch("mtblspy.commands.submissions.submission_download.SubmissionClient")
+@patch("mtblspy.commands.submissions.submission_download.create_submission_client")
 def test_submission_download_data_uses_base_url_and_files(mock_client_cls, runner, tmp_path):
     downloaded_file = tmp_path / "raw" / "file.raw"
     client = MagicMock()
@@ -629,7 +679,7 @@ def test_submission_download_data_uses_base_url_and_files(mock_client_cls, runne
     )
 
     assert result.exit_code == 0
-    mock_client_cls.assert_called_once_with(base_url="https://wwwdev.ebi.ac.uk/metabolights/ws")
+    mock_client_cls.assert_called_once_with(base_url="https://wwwdev.ebi.ac.uk/metabolights/ws", jwt_token=None)
     client.download_data_files.assert_called_once_with(
         "MTBLS123",
         target_path=str(tmp_path),
@@ -641,7 +691,7 @@ def test_submission_download_data_uses_base_url_and_files(mock_client_cls, runne
     assert payload["downloaded_files"] == [str(downloaded_file)]
 
 
-@patch("mtblspy.commands.submissions.submission_download.SubmissionClient")
+@patch("mtblspy.commands.submissions.submission_download.create_submission_client")
 def test_submission_download_data_requires_files_or_all(mock_client_cls, runner):
     result = runner.invoke(cli, ["submission", "download", "MTBLS123", "data"])
 
@@ -650,7 +700,7 @@ def test_submission_download_data_requires_files_or_all(mock_client_cls, runner)
     mock_client_cls.assert_not_called()
 
 
-@patch("mtblspy.commands.submissions.submission_download.SubmissionClient")
+@patch("mtblspy.commands.submissions.submission_download.create_submission_client")
 def test_submission_download_data_all_requires_explicit_flag(mock_client_cls, runner, tmp_path):
     downloaded_file = tmp_path / "raw" / "file.raw"
     client = MagicMock()
@@ -686,7 +736,7 @@ def test_submission_download_data_all_requires_explicit_flag(mock_client_cls, ru
     assert payload["status"] == "success"
 
 
-@patch("mtblspy.commands.submissions.submission_download.SubmissionClient")
+@patch("mtblspy.commands.submissions.submission_download.create_submission_client")
 def test_submission_download_data_rejects_files_with_all(mock_client_cls, runner):
     result = runner.invoke(cli, ["submission", "download", "MTBLS123", "data", "--files", "raw", "--all"])
 
@@ -695,7 +745,7 @@ def test_submission_download_data_rejects_files_with_all(mock_client_cls, runner
     mock_client_cls.assert_not_called()
 
 
-@patch("mtblspy.commands.submissions.submission_delete.SubmissionClient")
+@patch("mtblspy.commands.submissions.submission_delete.create_submission_client")
 def test_submission_delete_metadata_uses_base_url_and_files(mock_client_cls, runner):
     client = MagicMock()
     client.delete_metadata_files.return_value = FileDeleteResult(
@@ -720,7 +770,7 @@ def test_submission_delete_metadata_uses_base_url_and_files(mock_client_cls, run
     )
 
     assert result.exit_code == 0
-    mock_client_cls.assert_called_once_with(base_url="https://wwwdev.ebi.ac.uk/metabolights/ws")
+    mock_client_cls.assert_called_once_with(base_url="https://wwwdev.ebi.ac.uk/metabolights/ws", jwt_token=None)
     client.delete_metadata_files.assert_called_once_with(
         "MTBLS123",
         selected_files="i_Investigation.txt,s_MTBLS123.txt",
@@ -730,7 +780,7 @@ def test_submission_delete_metadata_uses_base_url_and_files(mock_client_cls, run
     assert payload["deleted_files"] == ["i_Investigation.txt", "s_MTBLS123.txt"]
 
 
-@patch("mtblspy.commands.submissions.submission_delete.SubmissionClient")
+@patch("mtblspy.commands.submissions.submission_delete.create_submission_client")
 def test_submission_delete_metadata_prints_api_error_details(mock_client_cls, runner):
     client = MagicMock()
     client.delete_metadata_files.side_effect = SubmissionAPIError(
@@ -758,7 +808,7 @@ def test_submission_delete_metadata_prints_api_error_details(mock_client_cls, ru
     assert payload["errors"] == ["HTTP 400 BAD REQUEST - Unable to delete selected files."]
 
 
-@patch("mtblspy.commands.submissions.submission_download.SubmissionClient")
+@patch("mtblspy.commands.submissions.submission_download.create_submission_client")
 def test_submission_download_metadata_uses_output_as_target_path(mock_client_cls, runner, tmp_path):
     client = MagicMock()
     client.download_metadata_files.return_value = FileDownloadResult(
@@ -779,7 +829,7 @@ def test_submission_download_metadata_uses_output_as_target_path(mock_client_cls
     )
 
 
-@patch("mtblspy.commands.submissions.submission_download.SubmissionClient")
+@patch("mtblspy.commands.submissions.submission_download.create_submission_client")
 def test_submission_download_data_uses_output_as_target_path(mock_client_cls, runner, tmp_path):
     client = MagicMock()
     client.download_data_files.return_value = FileDownloadResult(
@@ -801,7 +851,7 @@ def test_submission_download_data_uses_output_as_target_path(mock_client_cls, ru
     )
 
 
-@patch("mtblspy.commands.submissions.submission_upload_metadata.SubmissionClient")
+@patch("mtblspy.commands.submissions.submission_upload_metadata.create_submission_client")
 def test_submission_upload_metadata_success(mock_client_cls, runner, tmp_path):
     metadata_file = tmp_path / "i_Investigation.txt"
     skipped_file = tmp_path / "s_MTBLS123.txt"
@@ -833,7 +883,7 @@ def test_submission_upload_metadata_success(mock_client_cls, runner, tmp_path):
     )
 
     assert result.exit_code == 0
-    mock_client_cls.assert_called_once_with(base_url="https://wwwdev.ebi.ac.uk/metabolights/ws")
+    mock_client_cls.assert_called_once_with(base_url="https://wwwdev.ebi.ac.uk/metabolights/ws", jwt_token=None)
     payload = json.loads(result.output)
     assert payload["status"] == "success"
     assert payload["uploaded_files"] == ["i_Investigation.txt"]
@@ -849,7 +899,7 @@ def test_submission_upload_metadata_success(mock_client_cls, runner, tmp_path):
     )
 
 
-@patch("mtblspy.commands.submissions.submission_upload_metadata.SubmissionClient")
+@patch("mtblspy.commands.submissions.submission_upload_metadata.create_submission_client")
 def test_submission_upload_metadata_writes_json_output(mock_client_cls, runner, tmp_path, monkeypatch):
     monkeypatch.setattr(
         "mtblspy.commands.submissions.submission_upload_metadata.DEFAULT_LOCAL_SUBMISSION_CACHE_PATH",
@@ -888,10 +938,10 @@ def test_submission_upload_metadata_writes_json_output(mock_client_cls, runner, 
     payload = json.loads(output_file.read_text(encoding="utf-8"))
     assert payload["parameters"][3]["value"] == "https://upload.example/metabolights/ws"
     assert payload["uploaded_files"] == ["i_Investigation.txt"]
-    mock_client_cls.assert_called_once_with(base_url="https://upload.example/metabolights/ws")
+    mock_client_cls.assert_called_once_with(base_url="https://upload.example/metabolights/ws", jwt_token=None)
 
 
-@patch("mtblspy.commands.submissions.submission_upload_metadata.SubmissionClient")
+@patch("mtblspy.commands.submissions.submission_upload_metadata.create_submission_client")
 def test_submission_upload_metadata_failure_prints_readable_errors(mock_client_cls, runner, tmp_path):
     client = MagicMock()
     client.rest_api_base_url = "https://www.ebi.ac.uk/metabolights/ws"
@@ -926,7 +976,7 @@ def test_submission_upload_metadata_failure_prints_readable_errors(mock_client_c
     assert '{"content":null' not in result.output
 
 
-@patch("mtblspy.commands.submissions.submission_upload_data.SubmissionClient")
+@patch("mtblspy.commands.submissions.submission_upload_data.create_submission_client")
 def test_submission_upload_data_success(mock_client_cls, runner, tmp_path):
     client = MagicMock()
     client.rest_api_base_url = "https://www.ebi.ac.uk/metabolights/ws"
@@ -958,7 +1008,7 @@ def test_submission_upload_data_success(mock_client_cls, runner, tmp_path):
     )
 
     assert result.exit_code == 0
-    mock_client_cls.assert_called_once_with(base_url="https://wwwdev.ebi.ac.uk/metabolights/ws")
+    mock_client_cls.assert_called_once_with(base_url="https://wwwdev.ebi.ac.uk/metabolights/ws", jwt_token=None)
     payload = json.loads(result.output)
     assert payload["status"] == "success"
     assert payload["uploaded_files"] == ["folder1/file1.raw"]
@@ -974,7 +1024,7 @@ def test_submission_upload_data_success(mock_client_cls, runner, tmp_path):
     )
 
 
-@patch("mtblspy.commands.submissions.submission_upload_data.SubmissionClient")
+@patch("mtblspy.commands.submissions.submission_upload_data.create_submission_client")
 def test_submission_upload_data_writes_json_output(mock_client_cls, runner, tmp_path, monkeypatch):
     monkeypatch.setattr(
         "mtblspy.commands.submissions.submission_upload_data.DEFAULT_LOCAL_SUBMISSION_CACHE_PATH",
@@ -1013,10 +1063,10 @@ def test_submission_upload_data_writes_json_output(mock_client_cls, runner, tmp_
     payload = json.loads(output_file.read_text(encoding="utf-8"))
     assert payload["status"] == "failed"
     assert payload["missing_on_local"] == ["missing.raw"]
-    mock_client_cls.assert_called_once_with(base_url="https://upload.example/metabolights/ws")
+    mock_client_cls.assert_called_once_with(base_url="https://upload.example/metabolights/ws", jwt_token=None)
 
 
-@patch("mtblspy.commands.submissions.submission_clean_ftp_temp_files.SubmissionClient")
+@patch("mtblspy.commands.submissions.submission_clean_ftp_temp_files.create_submission_client")
 def test_submission_clean_ftp_temp_files_success(mock_client_cls, runner):
     client = MagicMock()
     client.rest_api_base_url = "https://www.ebi.ac.uk/metabolights/ws"
@@ -1033,7 +1083,7 @@ def test_submission_clean_ftp_temp_files_success(mock_client_cls, runner):
     )
 
     assert result.exit_code == 0
-    mock_client_cls.assert_called_once_with(base_url="https://wwwdev.ebi.ac.uk/metabolights/ws")
+    mock_client_cls.assert_called_once_with(base_url="https://wwwdev.ebi.ac.uk/metabolights/ws", jwt_token=None)
     payload = json.loads(result.output)
     assert payload["status"] == "success"
     assert payload["deleted_files"] == [".ftp_file1.raw", "folder1/.ftp_file2.raw"]
@@ -1043,7 +1093,7 @@ def test_submission_clean_ftp_temp_files_success(mock_client_cls, runner):
     client.clear_ftp_temporary_files.assert_called_once_with("MTBLS123")
 
 
-@patch("mtblspy.commands.submissions.submission_validate.SubmissionClient")
+@patch("mtblspy.commands.submissions.submission_validate.create_submission_client")
 def test_submission_validate_remote_prints_json_report(mock_client_cls, runner, tmp_path):
     report_path = tmp_path / "validation-report.json"
     report_path.write_text('{"accession": "MTBLS123", "messages": {"violations": []}}\n', encoding="utf-8")
@@ -1071,7 +1121,7 @@ def test_submission_validate_remote_prints_json_report(mock_client_cls, runner, 
     )
 
     assert result.exit_code == 0
-    mock_client_cls.assert_called_once_with(base_url="https://wwwdev.ebi.ac.uk/metabolights/ws")
+    mock_client_cls.assert_called_once_with(base_url="https://wwwdev.ebi.ac.uk/metabolights/ws", jwt_token=None)
     payload = load_stdout_json_prefix(result.output)
     assert payload["accession"] == "MTBLS123"
     assert payload["messages"] == {"violations": []}
@@ -1263,7 +1313,7 @@ def test_submission_check_folders_reports_folder_and_reference_errors(runner):
     assert "referenced_data_file_missing" in error_codes
 
 
-def test_submission_check_folders_reports_incomplete_metadata_errors(runner):
+def test_submission_check_folders_leaves_metadata_completeness_to_validate(runner):
     study_path = EXAMPLE_SUBMISSION_ROOT / "invalid-incomplete-metadata" / "MTBLSXXX"
 
     result = runner.invoke(
@@ -1283,16 +1333,16 @@ def test_submission_check_folders_reports_incomplete_metadata_errors(runner):
     payload = load_stdout_json_prefix(result.output)
     error_codes = {error["code"] for error in payload["errors"]}
     warning_codes = {warning["code"] for warning in payload["warnings"]}
-    assert "study_title_missing" in error_codes
-    assert "study_description_missing" in error_codes
-    assert "protocols_missing" in error_codes
-    assert "study_factor_missing" in error_codes
-    assert "study_contacts_missing" in error_codes
-    assert "sample_name_duplicate" in error_codes
-    assert "assay_sample_not_in_sample_file" in error_codes
     assert "referenced_data_file_missing" in error_codes
-    assert "study_descriptors_incomplete" in warning_codes
-    assert "factor_values_missing" in warning_codes
+    assert "study_title_missing" not in error_codes
+    assert "study_description_missing" not in error_codes
+    assert "protocols_missing" not in error_codes
+    assert "study_factor_missing" not in error_codes
+    assert "study_contacts_missing" not in error_codes
+    assert "sample_name_duplicate" not in error_codes
+    assert "assay_sample_not_in_sample_file" not in error_codes
+    assert "study_descriptors_incomplete" not in warning_codes
+    assert "factor_values_missing" not in warning_codes
 
 
 @patch("mtblspy.commands.submissions.submission_validate.run_local_validation")
@@ -1347,7 +1397,7 @@ def test_submission_validate_runs_local_validation_by_default(mock_run_local_val
     )
 
 
-@patch("mtblspy.commands.submissions.submission_validation_debug.SubmissionClient")
+@patch("mtblspy.commands.submissions.submission_validation_debug.create_submission_client")
 def test_submission_validation_debug_command(mock_client_cls, runner, tmp_path):
     isa_json_path = tmp_path / "MTBLS123.json"
     remote_report_path = tmp_path / "remote-validation.json"
@@ -1392,7 +1442,7 @@ def test_submission_validation_debug_command(mock_client_cls, runner, tmp_path):
         )
 
     assert result.exit_code == 0
-    mock_client_cls.assert_called_once_with(base_url="https://wwwdev.ebi.ac.uk/metabolights/ws")
+    mock_client_cls.assert_called_once_with(base_url="https://wwwdev.ebi.ac.uk/metabolights/ws", jwt_token=None)
     assert "Remote validation completed with 1 error(s)." in result.output
     assert "Raw data file 'missing.raw' is referenced but was not found." in result.output
     assert f"ISA JSON is saved as {isa_json_path}" in result.output
@@ -1411,7 +1461,7 @@ def test_submission_validation_debug_command(mock_client_cls, runner, tmp_path):
 
 
 @patch("mtblspy.commands.submissions.submission_validation_debug.run_local_validation")
-@patch("mtblspy.commands.submissions.submission_validation_debug.SubmissionClient")
+@patch("mtblspy.commands.submissions.submission_validation_debug.create_submission_client")
 def test_submission_validation_debug_command_compares_local_errors(mock_client_cls, mock_run_local_validation, runner, tmp_path):
     metadata_path = tmp_path / "metadata"
     metadata_path.mkdir()

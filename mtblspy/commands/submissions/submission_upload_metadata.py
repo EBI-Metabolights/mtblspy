@@ -7,10 +7,10 @@ from mtblspy.commands.output import save_json_output
 from mtblspy.commands.submissions.client import (
     DEFAULT_LOCAL_SUBMISSION_CACHE_PATH,
     DEFAULT_LOCAL_SUBMISSION_DATA_PATH,
-    SubmissionClient,
     normalize_study_id,
     parse_selected_metadata_files,
 )
+from mtblspy.commands.submissions.cli_utils import create_submission_client, jwt_token_option
 from mtblspy.commands.submissions.exceptions import SubmissionError
 
 
@@ -47,6 +47,7 @@ from mtblspy.commands.submissions.exceptions import SubmissionError
     type=click.Path(dir_okay=False),
     help="Save upload options and result as JSON. Filename-only values are saved to the current directory.",
 )
+@jwt_token_option
 def upload_metadata(
     study_id,
     default_submission_data_path,
@@ -55,6 +56,7 @@ def upload_metadata(
     base_url,
     selected_files,
     output,
+    jwt_token,
 ):
     """Upload ISA-Tab metadata files for a study."""
     normalized_endpoint = normalize_endpoint(mtbls_submission_endpoint or base_url)
@@ -65,7 +67,7 @@ def upload_metadata(
     )
 
     try:
-        client = SubmissionClient(base_url=normalized_endpoint)
+        client = create_submission_client(base_url=normalized_endpoint, jwt_token=jwt_token)
         result = client.upload_metadata(
             study_id,
             metadata_path=metadata_files_path,

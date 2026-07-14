@@ -6,10 +6,10 @@ from tqdm import tqdm
 from mtblspy.commands.output import save_json_output
 from mtblspy.commands.submissions.client import (
     DEFAULT_LOCAL_SUBMISSION_CACHE_PATH,
-    SubmissionClient,
     normalize_study_id,
     parse_comma_separated_values,
 )
+from mtblspy.commands.submissions.cli_utils import create_submission_client, jwt_token_option
 from mtblspy.commands.submissions.exceptions import SubmissionError
 
 
@@ -54,6 +54,7 @@ from mtblspy.commands.submissions.exceptions import SubmissionError
     show_default=True,
     help="Show an interactive progress bar on stderr while uploading.",
 )
+@jwt_token_option
 def upload_data(
     study_id,
     data_files_root_path,
@@ -64,6 +65,7 @@ def upload_data(
     base_url,
     output,
     progress,
+    jwt_token,
 ):
     """Upload study data files to the private FTP area."""
     normalized_study_id = normalize_study_id(study_id)
@@ -74,7 +76,7 @@ def upload_data(
     progress_bar = DataUploadProgress(enabled=progress and is_progress_stream_interactive())
 
     try:
-        client = SubmissionClient(base_url=normalized_endpoint)
+        client = create_submission_client(base_url=normalized_endpoint, jwt_token=jwt_token)
         upload_kwargs = {
             "data_files_root_path": data_files_root_path,
             "selected_files": selected_file_names,
