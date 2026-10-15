@@ -1,6 +1,6 @@
 [project]
 name = "mtblspy"
-version = "v0.1.0"
+version = "0.1.1"
 description = "MetaboLights Submission CLI"
 readme = "README.md"
 requires-python = ">=3.12"
