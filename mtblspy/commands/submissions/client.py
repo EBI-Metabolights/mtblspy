@@ -1,15 +1,27 @@
 import base64
-from ftplib import FTP, error_perm
 import json
+import logging
 import posixpath
 import time
 from dataclasses import dataclass, field
+from ftplib import FTP, error_perm
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote, urlencode, urlsplit
 
 import requests
 
+from mtblspy.commands.output import resolve_json_output_path, write_json_file
+from mtblspy.commands.submissions.exceptions import (
+    AuthenticationError,
+    SubmissionAPIError,
+)
+from mtblspy.commands.submissions.models import (
+    FtpUploadDetails,
+    StudyCreationRequest,
+    StudyInputFormat,
+    get_default_study_creation_request,
+)
 from mtblspy.config import (
     get_api_key,
     get_base_url,
@@ -21,22 +33,20 @@ from mtblspy.config import (
     save_jwt_token,
     save_refresh_token,
 )
-from mtblspy.commands.output import resolve_json_output_path, write_json_file
-from mtblspy.commands.submissions.exceptions import AuthenticationError, SubmissionAPIError
-from mtblspy.commands.submissions.models import (
-    FtpUploadDetails,
-    StudyCreationRequest,
-    StudyInputFormat,
-    get_default_study_creation_request,
-)
 
 VALIDATION_MAX_POLLS = 120
 VALIDATION_POLL_INTERVAL_SECONDS = 5
 METADATA_UPLOAD_TIMEOUT_SECONDS = 120
-DEFAULT_LOCAL_SUBMISSION_CACHE_PATH = Path.home() / "metabolights_data" / "submission" / "cache"
-DEFAULT_LOCAL_SUBMISSION_DATA_PATH = Path.home() / "metabolights_data" / "submission" / "data"
+DEFAULT_LOCAL_SUBMISSION_CACHE_PATH = (
+    Path.home() / "metabolights_data" / "submission" / "cache"
+)
+DEFAULT_LOCAL_SUBMISSION_DATA_PATH = (
+    Path.home() / "metabolights_data" / "submission" / "data"
+)
 DEFAULT_STUDY_INPUT_DATA_FOLDER = DEFAULT_LOCAL_SUBMISSION_DATA_PATH
 DEFAULT_STUDY_INPUT_FILE_NAME = "study_input.json"
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -105,20 +115,28 @@ class DataUploadPlan:
 class SubmissionClient:
     def __init__(self, base_url=None, api_token=None):
         self.rest_api_base_url = get_rest_api_base_url(base_url or get_base_url())
-        self.submission_api_base_url = get_submission_api_base_url(self.rest_api_base_url)
+        self.submission_api_base_url = get_submission_api_base_url(
+            self.rest_api_base_url
+        )
         self.credential_base_url = get_credential_base_url(self.rest_api_base_url)
         self.api_token = api_token
 
     def get_auth_headers(self):
-        api_token = self.api_token or get_api_key(credential_base_url=self.credential_base_url)
+        api_token = self.api_token or get_api_key(
+            credential_base_url=self.credential_base_url
+        )
         if api_token:
             return {"user-token": api_token.strip()}
         return self.get_submission_headers()
 
     def get_submission_headers(self, force_refresh=False):
-        jwt_token = None if force_refresh else get_jwt_token(
-            self.submission_api_base_url,
-            credential_base_url=self.credential_base_url,
+        jwt_token = (
+            None
+            if force_refresh
+            else get_jwt_token(
+                self.submission_api_base_url,
+                credential_base_url=self.credential_base_url,
+            )
         )
         if not jwt_token and not force_refresh:
             jwt_token = get_jwt_token(
@@ -126,7 +144,10 @@ class SubmissionClient:
                 credential_base_url=self.credential_base_url,
             )
         if jwt_token and not force_refresh and not is_jwt_expired(jwt_token):
-            return {"accept": "application/json", "Authorization": f"Bearer {jwt_token}"}
+            return {
+                "accept": "application/json",
+                "Authorization": f"Bearer {jwt_token}",
+            }
 
         # Try to refresh using a stored refresh token
         refresh_token = get_refresh_token(
@@ -141,10 +162,15 @@ class SubmissionClient:
                     new_jwt,
                     credential_base_url=self.credential_base_url,
                 )
-                return {"accept": "application/json", "Authorization": f"Bearer {new_jwt}"}
+                return {
+                    "accept": "application/json",
+                    "Authorization": f"Bearer {new_jwt}",
+                }
 
         # Final fallback: exchange stored api_token for a JWT
-        api_token = self.api_token or get_api_key(credential_base_url=self.credential_base_url)
+        api_token = self.api_token or get_api_key(
+            credential_base_url=self.credential_base_url
+        )
         if not api_token:
             raise AuthenticationError(
                 "Not logged in. Please run 'mtbls auth login' first or re-run the command with --jwt-token option."
@@ -175,7 +201,11 @@ class SubmissionClient:
                     "accept": "application/json",
                     "Content-Type": "application/x-www-form-urlencoded",
                 },
-                data={"grant_type": "password", "username": user_name, "client_secret": api_token},
+                data={
+                    "grant_type": "password",
+                    "username": user_name,
+                    "client_secret": api_token,
+                },
                 timeout=30,
             )
             jwt_token = get_jwt_from_response(response)
@@ -207,7 +237,10 @@ class SubmissionClient:
         except requests.RequestException as exc:
             errors.append(f"keycloak auth: {exc}")
 
-        raise AuthenticationError("Unable to get JWT token for submission API. Attempts failed: " + "; ".join(errors))
+        raise AuthenticationError(
+            "Unable to get JWT token for submission API. Attempts failed: "
+            + "; ".join(errors)
+        )
 
     def refresh_jwt_token(self, refresh_token):
         """Attempt to get a new JWT using a refresh token. Returns the new JWT or None on failure."""
@@ -267,9 +300,13 @@ class SubmissionClient:
         return None
 
     def require_api_token(self):
-        api_token = self.api_token or get_api_key(credential_base_url=self.credential_base_url)
+        api_token = self.api_token or get_api_key(
+            credential_base_url=self.credential_base_url
+        )
         if not api_token:
-            raise AuthenticationError("Not logged in. Please run 'mtbls auth login' first.")
+            raise AuthenticationError(
+                "Not logged in. Please run 'mtbls auth login' first."
+            )
         return api_token.strip()
 
     def login(self, user_name, password):
@@ -279,7 +316,10 @@ class SubmissionClient:
         try:
             response = requests.post(
                 login_url,
-                headers={"accept": "application/json", "Content-Type": "application/json"},
+                headers={
+                    "accept": "application/json",
+                    "Content-Type": "application/json",
+                },
                 json={"email": user_name, "secret": password},
                 timeout=30,
             )
@@ -342,7 +382,9 @@ class SubmissionClient:
                 errors.append(f"keycloak token auth: {exc}")
 
         if not jwt_token:
-            raise AuthenticationError("Unable to fetch JWT token. Attempts failed: " + "; ".join(errors))
+            raise AuthenticationError(
+                "Unable to fetch JWT token. Attempts failed: " + "; ".join(errors)
+            )
 
         if not api_token:
             api_token = self.fetch_api_token_from_accounts(jwt_token)
@@ -387,11 +429,11 @@ class SubmissionClient:
         api_token = None
         if fetch_api_token:
             api_token = self.try_fetch_api_token_from_jwt(jwt_token)
-        config_values = dict(
-            base_url=self.rest_api_base_url,
-            user_name=user_name,
-            credential_base_url=self.credential_base_url,
-        )
+        config_values = {
+            "base_url": self.rest_api_base_url,
+            "user_name": user_name,
+            "credential_base_url": self.credential_base_url,
+        }
         if api_token:
             config_values["api_key"] = api_token
         save_config(
@@ -414,7 +456,10 @@ class SubmissionClient:
         try:
             response = requests.get(
                 accounts_url,
-                headers={"accept": "application/json", "Authorization": f"Bearer {jwt_token}"},
+                headers={
+                    "accept": "application/json",
+                    "Authorization": f"Bearer {jwt_token}",
+                },
                 timeout=30,
             )
             response.raise_for_status()
@@ -455,10 +500,14 @@ class SubmissionClient:
         raise_for_response_error(response, "Study creation failed")
         return response.json()
 
-    def load_study_creation_request(self, input_file_path, input_format=StudyInputFormat.JSON):
+    def load_study_creation_request(
+        self, input_file_path, input_format=StudyInputFormat.JSON
+    ):
         input_format = StudyInputFormat(input_format)
         if input_format is not StudyInputFormat.JSON:
-            raise ValueError(f"Unsupported study creation input format: {input_format.value}")
+            raise ValueError(
+                f"Unsupported study creation input format: {input_format.value}"
+            )
 
         with Path(input_file_path).open("r", encoding="utf-8") as input_file:
             data = json.load(input_file)
@@ -498,7 +547,9 @@ class SubmissionClient:
         if not file_paths:
             raise SubmissionAPIError("No ISA-Tab metadata files found to upload.")
 
-        url = f"{self.rest_api_base_url.rstrip('/')}/studies/{study_id}/drag-drop-upload"
+        url = (
+            f"{self.rest_api_base_url.rstrip('/')}/studies/{study_id}/drag-drop-upload"
+        )
         headers = self.get_auth_headers()
         responses = []
         errors = []
@@ -513,7 +564,9 @@ class SubmissionClient:
                         timeout=METADATA_UPLOAD_TIMEOUT_SECONDS,
                     )
                 if response.status_code not in (200, 201):
-                    errors.append(format_metadata_upload_error(file_path.name, response))
+                    errors.append(
+                        format_metadata_upload_error(file_path.name, response)
+                    )
                     continue
                 responses.append(get_response_payload(response))
             except Exception as exc:
@@ -599,7 +652,9 @@ class SubmissionClient:
         headers = self.get_auth_headers()
         soft_errors = []
         not_found_count = 0
-        for url in build_metadata_download_urls(self.rest_api_base_url, study_id, file_name):
+        for url in build_metadata_download_urls(
+            self.rest_api_base_url, study_id, file_name
+        ):
             response = requests.get(url, headers=headers, timeout=60)
             status_code = int(response.status_code)
             if 200 <= status_code < 300:
@@ -635,7 +690,9 @@ class SubmissionClient:
                 "Metadata delete requires --files with comma-separated metadata filenames."
             )
 
-        response = self.post_metadata_delete_files(study_id, build_delete_files_payload(file_names))
+        response = self.post_metadata_delete_files(
+            study_id, build_delete_files_payload(file_names)
+        )
         if not is_successful_response(response):
             raise SubmissionAPIError(
                 f"Metadata delete failed for {study_id}.",
@@ -692,8 +749,12 @@ class SubmissionClient:
         try:
             upload_root = enter_ftp_upload_root(ftp, ftp_details.ftp_folder)
             remote_files, _remote_folders = index_ftp_data_files(ftp, upload_root)
-            selected_remote_files, missing_files = select_remote_data_files(remote_files, selected_file_names)
-            emit_file_download_progress(progress_callback, "start", total=len(selected_remote_files))
+            selected_remote_files, missing_files = select_remote_data_files(
+                remote_files, selected_file_names
+            )
+            emit_file_download_progress(
+                progress_callback, "start", total=len(selected_remote_files)
+            )
             target_root.mkdir(parents=True, exist_ok=True)
 
             for relative_path in selected_remote_files:
@@ -718,8 +779,8 @@ class SubmissionClient:
         finally:
             try:
                 ftp.quit()
-            except Exception:
-                pass
+            except Exception as ex:
+                logger.exception(ex)
 
         return FileDownloadResult(
             study_id=study_id,
@@ -849,8 +910,8 @@ class SubmissionClient:
         finally:
             try:
                 ftp.quit()
-            except Exception:
-                pass
+            except Exception as ex:
+                logger.exception(ex)
 
         return DataUploadResult(
             study_id=study_id,
@@ -871,8 +932,8 @@ class SubmissionClient:
         finally:
             try:
                 ftp.quit()
-            except Exception:
-                pass
+            except Exception as ex:
+                logger.exception(ex)
 
         return FtpTemporaryCleanupResult(
             study_id=study_id,
@@ -891,7 +952,12 @@ class SubmissionClient:
     ):
         study_id = normalize_study_id(study_id)
         isa_json = self.get_study_isa_json(study_id) if use_isa_json else None
-        report = self.run_study_validation(study_id, isa_json=isa_json, max_polls=max_polls, poll_interval=poll_interval)
+        report = self.run_study_validation(
+            study_id,
+            isa_json=isa_json,
+            max_polls=max_polls,
+            poll_interval=poll_interval,
+        )
         report_path = save_validation_report(
             study_id,
             report,
@@ -915,7 +981,12 @@ class SubmissionClient:
         study_id = normalize_study_id(study_id)
         isa_json = self.get_study_isa_json(study_id)
         isa_json_path = save_isa_json(study_id, isa_json, isa_json_file_path)
-        report = self.run_study_validation(study_id, isa_json=isa_json, max_polls=max_polls, poll_interval=poll_interval)
+        report = self.run_study_validation(
+            study_id,
+            isa_json=isa_json,
+            max_polls=max_polls,
+            poll_interval=poll_interval,
+        )
         report_path = save_validation_report(
             study_id,
             report,
@@ -923,9 +994,15 @@ class SubmissionClient:
             isa_json=isa_json,
             include_root_causes=True,
         )
-        errors = enrich_validation_errors_with_isa_json(get_validation_errors(report), isa_json)
-        validation_result = ValidationResult(report=report, errors=errors, report_path=report_path)
-        return ValidationRootCauseResult(validation_result=validation_result, isa_json_path=isa_json_path)
+        errors = enrich_validation_errors_with_isa_json(
+            get_validation_errors(report), isa_json
+        )
+        validation_result = ValidationResult(
+            report=report, errors=errors, report_path=report_path
+        )
+        return ValidationRootCauseResult(
+            validation_result=validation_result, isa_json_path=isa_json_path
+        )
 
     def run_study_validation(
         self,
@@ -941,7 +1018,9 @@ class SubmissionClient:
         response = post_validation_request(validation_url, headers, isa_json=isa_json)
         if response.status_code == 401:
             headers = self.get_submission_headers(force_refresh=True)
-            response = post_validation_request(validation_url, headers, isa_json=isa_json)
+            response = post_validation_request(
+                validation_url, headers, isa_json=isa_json
+            )
         if response.status_code == 401:
             raise AuthenticationError(
                 f"Submission validation API rejected the JWT token for {study_id}. "
@@ -954,10 +1033,15 @@ class SubmissionClient:
 
         task_id = get_task_id(response_data)
         if not task_id:
-            raise SubmissionAPIError(f"Validation task for {study_id} did not return a task id.")
+            raise SubmissionAPIError(
+                f"Validation task for {study_id} did not return a task id."
+            )
 
         initial_status = get_task_status(response_data)
-        if is_task_successful(response_data) is not True and "SUCCESS" not in initial_status.upper():
+        if (
+            is_task_successful(response_data) is not True
+            and "SUCCESS" not in initial_status.upper()
+        ):
             task_headers = dict(headers)
             task_headers["Task-Id"] = task_id
             response_data = ensure_validation_task_succeeded(
@@ -988,7 +1072,10 @@ def normalize_study_id(study_id):
 def post_validation_request(validation_url, headers, isa_json=None):
     kwargs = {
         "headers": headers,
-        "params": {"run_metadata_modifiers": "false", "override_previous_task_results": "true"},
+        "params": {
+            "run_metadata_modifiers": "false",
+            "override_previous_task_results": "true",
+        },
         "timeout": 30,
     }
     if isa_json is not None:
@@ -1031,7 +1118,9 @@ def save_sample_study_input(data_folder=None, output_path=None, overwrite=True):
             DEFAULT_STUDY_INPUT_FILE_NAME,
         )
     else:
-        output_path = resolve_study_input_data_folder(data_folder) / DEFAULT_STUDY_INPUT_FILE_NAME
+        output_path = (
+            resolve_study_input_data_folder(data_folder) / DEFAULT_STUDY_INPUT_FILE_NAME
+        )
     if output_path.exists() and not overwrite:
         raise SubmissionAPIError(f"Study input file already exists: {output_path}")
     if output_path.exists() and output_path.is_dir():
@@ -1046,9 +1135,9 @@ def is_metadata_filename(filename):
         return False
     if len(filename) <= 6:
         return False
-    return (
-        filename.startswith(("a_", "s_", "i_")) and filename.endswith(".txt")
-    ) or (filename.startswith("m_") and filename.endswith(".tsv"))
+    return (filename.startswith(("a_", "s_", "i_")) and filename.endswith(".txt")) or (
+        filename.startswith("m_") and filename.endswith(".tsv")
+    )
 
 
 def parse_selected_metadata_files(selected_files):
@@ -1075,13 +1164,17 @@ def parse_comma_separated_values(values):
 
 def resolve_download_target_path(target_path, study_id):
     if not target_path:
-        return (DEFAULT_LOCAL_SUBMISSION_DATA_PATH / normalize_study_id(study_id)).resolve()
+        return (
+            DEFAULT_LOCAL_SUBMISSION_DATA_PATH / normalize_study_id(study_id)
+        ).resolve()
     return Path(target_path).expanduser().resolve()
 
 
 def resolve_data_download_target_path(target_path, study_id):
     if not target_path:
-        return (DEFAULT_LOCAL_SUBMISSION_DATA_PATH / normalize_study_id(study_id) / "FILES").resolve()
+        return (
+            DEFAULT_LOCAL_SUBMISSION_DATA_PATH / normalize_study_id(study_id) / "FILES"
+        ).resolve()
     return Path(target_path).expanduser().resolve()
 
 
@@ -1150,7 +1243,9 @@ def parse_metadata_delete_response(response, requested_files):
         message_text = str(message).strip()
         if not message_text:
             continue
-        matched_files = [file_name for file_name in requested_files if file_name in message_text]
+        matched_files = [
+            file_name for file_name in requested_files if file_name in message_text
+        ]
         if matched_files and is_metadata_delete_success_message(message_text):
             confirmed_deleted_files.update(matched_files)
             continue
@@ -1159,9 +1254,15 @@ def parse_metadata_delete_response(response, requested_files):
             blocked_files.update(matched_files)
 
     if errors:
-        deleted_files = [file_name for file_name in requested_files if file_name in confirmed_deleted_files]
+        deleted_files = [
+            file_name
+            for file_name in requested_files
+            if file_name in confirmed_deleted_files
+        ]
     else:
-        deleted_files = [file_name for file_name in requested_files if file_name not in blocked_files]
+        deleted_files = [
+            file_name for file_name in requested_files if file_name not in blocked_files
+        ]
     if errors and not blocked_files and not confirmed_deleted_files:
         deleted_files = []
     return deleted_files, deduplicate_strings(errors)
@@ -1209,24 +1310,34 @@ def resolve_metadata_file_paths(
         if default_submission_data_path
         else DEFAULT_LOCAL_SUBMISSION_DATA_PATH
     )
-    base_path = Path(metadata_path).expanduser() if metadata_path else default_data_path / study_id
+    base_path = (
+        Path(metadata_path).expanduser()
+        if metadata_path
+        else default_data_path / study_id
+    )
     base_path = base_path.resolve()
     metadata_files = list(metadata_files or [])
     selected_file_names = parse_selected_metadata_files(selected_files)
 
     if metadata_files and selected_file_names:
-        raise SubmissionAPIError("Metadata files and selected files cannot both be provided.")
+        raise SubmissionAPIError(
+            "Metadata files and selected files cannot both be provided."
+        )
 
     if base_path.is_file():
         if metadata_files or selected_file_names:
-            raise SubmissionAPIError("Metadata files cannot be selected when metadata path is a file.")
+            raise SubmissionAPIError(
+                "Metadata files cannot be selected when metadata path is a file."
+            )
         file_paths = [base_path]
         skipped_files = []
     else:
         if not base_path.exists():
             raise SubmissionAPIError(f"Metadata path does not exist: {base_path}")
         if not base_path.is_dir():
-            raise SubmissionAPIError(f"Metadata path is not a file or directory: {base_path}")
+            raise SubmissionAPIError(
+                f"Metadata path is not a file or directory: {base_path}"
+            )
 
         metadata_file_paths = sorted(
             path.resolve()
@@ -1241,21 +1352,34 @@ def resolve_metadata_file_paths(
                     file_path = base_path / file_path
                 file_paths.append(file_path.resolve())
             selected_names = {path.name for path in file_paths}
-            skipped_files = [path for path in metadata_file_paths if path.name not in selected_names]
+            skipped_files = [
+                path for path in metadata_file_paths if path.name not in selected_names
+            ]
         elif selected_file_names:
-            file_paths = [(base_path / selected_file).resolve() for selected_file in selected_file_names]
-            selected_names = {Path(selected_file).name for selected_file in selected_file_names}
-            skipped_files = [path for path in metadata_file_paths if path.name not in selected_names]
+            file_paths = [
+                (base_path / selected_file).resolve()
+                for selected_file in selected_file_names
+            ]
+            selected_names = {
+                Path(selected_file).name for selected_file in selected_file_names
+            }
+            skipped_files = [
+                path for path in metadata_file_paths if path.name not in selected_names
+            ]
         else:
             file_paths = metadata_file_paths
             skipped_files = []
 
-    invalid_paths = [path for path in file_paths if not path.exists() or not path.is_file()]
+    invalid_paths = [
+        path for path in file_paths if not path.exists() or not path.is_file()
+    ]
     if invalid_paths:
         missing = ", ".join(str(path) for path in invalid_paths)
         raise SubmissionAPIError(f"Metadata file does not exist: {missing}")
 
-    invalid_names = [path.name for path in file_paths if not is_metadata_filename(path.name)]
+    invalid_names = [
+        path.name for path in file_paths if not is_metadata_filename(path.name)
+    ]
     if invalid_names:
         names = ", ".join(invalid_names)
         raise SubmissionAPIError(f"Unsupported metadata file name(s): {names}")
@@ -1289,9 +1413,13 @@ def metadata_filename_study_id_error(file_name, study_id):
         if file_name != expected_name:
             return f"{file_name}: sample file name must be {expected_name}."
         return None
-    if file_name.startswith("a_") and not has_study_id_name_part(file_name.removeprefix("a_").removesuffix(".txt"), study_id):
+    if file_name.startswith("a_") and not has_study_id_name_part(
+        file_name.removeprefix("a_").removesuffix(".txt"), study_id
+    ):
         return f"{file_name}: assay file name must be a_{study_id}.txt, a_{study_id}_*.txt, or a_{study_id}-*.txt."
-    if file_name.startswith("m_") and not has_study_id_name_part(file_name.removeprefix("m_").removesuffix(".tsv"), study_id):
+    if file_name.startswith("m_") and not has_study_id_name_part(
+        file_name.removeprefix("m_").removesuffix(".tsv"), study_id
+    ):
         return f"{file_name}: metabolite assignment file name must be m_{study_id}.tsv, m_{study_id}_*.tsv, or m_{study_id}-*.tsv."
     return None
 
@@ -1299,7 +1427,7 @@ def metadata_filename_study_id_error(file_name, study_id):
 def has_study_id_name_part(name_part, study_id):
     if name_part == study_id:
         return True
-    return name_part.startswith(f"{study_id}_") or name_part.startswith(f"{study_id}-")
+    return name_part.startswith((f"{study_id}_", f"{study_id}-"))
 
 
 def resolve_data_upload_plan(
@@ -1312,7 +1440,9 @@ def resolve_data_upload_plan(
     if not root_path.exists():
         raise SubmissionAPIError(f"Data files root path does not exist: {root_path}")
     if not root_path.is_dir():
-        raise SubmissionAPIError(f"Data files root path is not a directory: {root_path}")
+        raise SubmissionAPIError(
+            f"Data files root path is not a directory: {root_path}"
+        )
 
     selected_entries = parse_comma_separated_values(selected_files)
     skip_entries = parse_comma_separated_values(skip_uploaded_files)
@@ -1372,8 +1502,8 @@ def emit_data_upload_progress(progress_callback, event, **payload):
         return
     try:
         progress_callback({"event": event, **payload})
-    except Exception:
-        pass
+    except Exception as ex:
+        logger.exception(ex)
 
 
 def emit_file_download_progress(progress_callback, event, **payload):
@@ -1381,8 +1511,8 @@ def emit_file_download_progress(progress_callback, event, **payload):
         return
     try:
         progress_callback({"event": event, **payload})
-    except Exception:
-        pass
+    except Exception as ex:
+        logger.exception(ex)
 
 
 def collect_data_upload_paths(
@@ -1412,10 +1542,14 @@ def collect_data_upload_paths(
 
     for folder_path in sorted(path for path in candidate.rglob("*") if path.is_dir()):
         if is_empty_directory(folder_path):
-            empty_folders_by_relative_path[to_posix_relative_path(folder_path, root_path)] = folder_path
+            empty_folders_by_relative_path[
+                to_posix_relative_path(folder_path, root_path)
+            ] = folder_path
 
     if not found_file and is_empty_directory(candidate):
-        empty_folders_by_relative_path[to_posix_relative_path(candidate, root_path)] = candidate
+        empty_folders_by_relative_path[to_posix_relative_path(candidate, root_path)] = (
+            candidate
+        )
 
 
 def resolve_data_candidate_path(root_path, requested_path):
@@ -1605,8 +1739,8 @@ def verify_ftp_file_size(ftp, temporary_path, expected_size, final_relative_path
 
     try:
         ftp.delete(temporary_path)
-    except Exception:
-        pass
+    except Exception as ex:
+        logger.exception(ex)
     raise SubmissionAPIError(
         f"Uploaded temporary file size mismatch for {final_relative_path}: "
         f"expected {expected_size} bytes, got {uploaded_size} bytes."
@@ -1616,8 +1750,8 @@ def verify_ftp_file_size(ftp, temporary_path, expected_size, final_relative_path
 def get_ftp_file_size(ftp, remote_path):
     try:
         return parse_ftp_size(ftp.size(remote_path))
-    except Exception:
-        pass
+    except Exception as ex:
+        logger.exception(ex)
 
     directory = posixpath.dirname(remote_path) or "."
     filename = posixpath.basename(remote_path)
@@ -1631,7 +1765,11 @@ def get_ftp_file_size(ftp, remote_path):
 
 
 def select_remote_data_files(remote_files, selected_files=None):
-    available_files = sorted(relative_path for relative_path in remote_files if is_data_download_filename(relative_path))
+    available_files = sorted(
+        relative_path
+        for relative_path in remote_files
+        if is_data_download_filename(relative_path)
+    )
     available_file_set = set(available_files)
     if not selected_files:
         return available_files, []
@@ -1660,7 +1798,11 @@ def select_remote_data_files(remote_files, selected_files=None):
 
 def is_data_download_filename(relative_path):
     file_name = posixpath.basename(relative_path)
-    return bool(file_name) and not file_name.startswith(".ftp_") and not is_metadata_filename(file_name)
+    return (
+        bool(file_name)
+        and not file_name.startswith(".ftp_")
+        and not is_metadata_filename(file_name)
+    )
 
 
 def download_ftp_file(ftp, root_directory, relative_path, output_path):
@@ -1691,13 +1833,17 @@ def delete_ftp_temporary_files(ftp, remote_root):
     deleted_files = []
     errors = []
     try:
-        walk_and_delete_ftp_temporary_files(ftp, remote_root or ".", "", deleted_files, errors)
+        walk_and_delete_ftp_temporary_files(
+            ftp, remote_root or ".", "", deleted_files, errors
+        )
     except Exception as exc:
         errors.append(f"Unable to scan FTP folder: {exc}")
     return deleted_files, errors
 
 
-def walk_and_delete_ftp_temporary_files(ftp, remote_directory, relative_directory, deleted_files, errors):
+def walk_and_delete_ftp_temporary_files(
+    ftp, remote_directory, relative_directory, deleted_files, errors
+):
     try:
         entries = list(ftp.mlsd(remote_directory))
     except Exception:
@@ -1717,7 +1863,9 @@ def walk_and_delete_ftp_temporary_files(ftp, remote_directory, relative_director
         relative_path = join_relative_path(relative_directory, name)
         remote_path = join_remote_path(remote_directory, name)
         if entry_type == "dir":
-            walk_and_delete_ftp_temporary_files(ftp, remote_path, relative_path, deleted_files, errors)
+            walk_and_delete_ftp_temporary_files(
+                ftp, remote_path, relative_path, deleted_files, errors
+            )
         elif entry_type == "file" and name.startswith(".ftp_"):
             try:
                 ftp.delete(remote_path)
@@ -1726,7 +1874,9 @@ def walk_and_delete_ftp_temporary_files(ftp, remote_directory, relative_director
                 errors.append(f"{relative_path}: {exc}")
 
 
-def walk_and_delete_ftp_temporary_files_by_nlst(ftp, remote_directory, relative_directory, deleted_files, errors):
+def walk_and_delete_ftp_temporary_files_by_nlst(
+    ftp, remote_directory, relative_directory, deleted_files, errors
+):
     try:
         entries = ftp.nlst(remote_directory)
     except Exception as exc:
@@ -1779,8 +1929,8 @@ def is_ftp_directory(ftp, remote_path):
     finally:
         try:
             ftp.cwd(current_directory)
-        except Exception:
-            pass
+        except Exception as ex:
+            logger.exception(ex)
     return True
 
 
@@ -1840,7 +1990,9 @@ def get_jwt_from_response(response):
     if jwt_token:
         return jwt_token
 
-    authorization = response.headers.get("Authorization") or response.headers.get("authorization")
+    authorization = response.headers.get("Authorization") or response.headers.get(
+        "authorization"
+    )
     if authorization and authorization.lower().startswith("bearer "):
         return authorization.split(" ", 1)[1].strip()
 
@@ -1850,12 +2002,18 @@ def get_jwt_from_response(response):
         return None
 
     if isinstance(response_data, dict):
-        return response_data.get("jwt") or response_data.get("token") or response_data.get("access_token")
+        return (
+            response_data.get("jwt")
+            or response_data.get("token")
+            or response_data.get("access_token")
+        )
     return None
 
 
 def get_refresh_token_from_response(response):
-    refresh_token = response.headers.get("refresh-token") or response.headers.get("Refresh-Token")
+    refresh_token = response.headers.get("refresh-token") or response.headers.get(
+        "Refresh-Token"
+    )
     if refresh_token:
         return refresh_token
 
@@ -1900,7 +2058,9 @@ def find_api_token(value):
     return None
 
 
-def save_refresh_token_from_response(submission_api_base_url, response, credential_base_url=None):
+def save_refresh_token_from_response(
+    submission_api_base_url, response, credential_base_url=None
+):
     refresh_token = get_refresh_token_from_response(response)
     if refresh_token:
         save_refresh_token(
@@ -1936,7 +2096,9 @@ def decode_jwt_payload(jwt_token):
     payload = parts[1]
     payload += "=" * (-len(payload) % 4)
     try:
-        return json.loads(base64.urlsafe_b64decode(payload.encode("ascii")).decode("utf-8"))
+        return json.loads(
+            base64.urlsafe_b64decode(payload.encode("ascii")).decode("utf-8")
+        )
     except (ValueError, TypeError):
         return {}
 
@@ -1986,12 +2148,15 @@ def get_keycloak_token_url(submission_api_base_url):
     parsed = urlsplit(submission_api_base_url.rstrip("/"))
     base_url = f"{parsed.scheme}://{parsed.netloc}"
     context_path = parsed.path
-    if context_path.endswith("/ws3"):
-        context_path = context_path[: -len("/ws3")]
+    context_path = context_path.removesuffix("/ws3")
     if not context_path:
         context_path = "/metabolights"
 
-    iam_path = f"{context_path}/test/iam" if parsed.netloc.startswith("wwwdev.") else f"{context_path}/iam"
+    iam_path = (
+        f"{context_path}/test/iam"
+        if parsed.netloc.startswith("wwwdev.")
+        else f"{context_path}/iam"
+    )
     return f"{base_url}{iam_path}/realms/metabolights/protocol/openid-connect/token"
 
 
@@ -2045,8 +2210,12 @@ def collect_response_error_messages(value):
     if not isinstance(value, dict):
         return [str(value)]
 
-    field = first_present_value(value, "field", "fieldName", "property", "propertyPath", "path", "name")
-    message = first_present_value(value, "message", "errorMessage", "error_message", "detail", "reason", "cause")
+    field = first_present_value(
+        value, "field", "fieldName", "property", "propertyPath", "path", "name"
+    )
+    message = first_present_value(
+        value, "message", "errorMessage", "error_message", "detail", "reason", "cause"
+    )
     if field and message and not isinstance(message, (dict, list)):
         return [f"{field}: {message}"]
 
@@ -2068,7 +2237,14 @@ def collect_response_error_messages(value):
     for key in preferred_keys:
         if key in value:
             child_errors = collect_response_error_messages(value[key])
-            if key in {"errors", "violations", "rootCauses", "causes", "fieldErrors", "validationErrors"}:
+            if key in {
+                "errors",
+                "violations",
+                "rootCauses",
+                "causes",
+                "fieldErrors",
+                "validationErrors",
+            }:
                 errors.extend(child_errors)
             else:
                 errors.extend(child_errors)
@@ -2104,7 +2280,13 @@ def deduplicate_strings(values):
 def get_task_status(response_data):
     content = response_data.get("content", response_data)
     task = content.get("task", content) if isinstance(content, dict) else {}
-    return task.get("taskStatus") or task.get("last_status") or task.get("status") or task.get("task_status") or ""
+    return (
+        task.get("taskStatus")
+        or task.get("last_status")
+        or task.get("status")
+        or task.get("task_status")
+        or ""
+    )
 
 
 def get_task_id(response_data):
@@ -2135,7 +2317,11 @@ def is_task_ready(response_data):
 def is_task_successful(response_data):
     content = response_data.get("content", response_data)
     task = content.get("task", content) if isinstance(content, dict) else {}
-    return task.get("isSuccessful") if "isSuccessful" in task else task.get("is_successful")
+    return (
+        task.get("isSuccessful")
+        if "isSuccessful" in task
+        else task.get("is_successful")
+    )
 
 
 def raise_for_api_error(response_data):
@@ -2154,7 +2340,9 @@ def raise_for_api_error(response_data):
 def is_validation_task_not_found(response_data):
     if not isinstance(response_data, dict):
         return False
-    message = response_data.get("errorMessage") or response_data.get("error_message") or ""
+    message = (
+        response_data.get("errorMessage") or response_data.get("error_message") or ""
+    )
     return "AsyncTaskNotFoundError" in message or "No validation task found" in message
 
 
@@ -2164,13 +2352,17 @@ def format_task_state(response_data):
     ready = is_task_ready(response_data)
     successful = is_task_successful(response_data)
     message = get_task_message(response_data)
-    state = f"task_id={task_id}, status={status}, ready={ready}, successful={successful}"
+    state = (
+        f"task_id={task_id}, status={status}, ready={ready}, successful={successful}"
+    )
     if message:
         state = f"{state}, message={message}"
     return state
 
 
-def ensure_validation_task_succeeded(study_id, validation_url, headers, max_polls, poll_interval):
+def ensure_validation_task_succeeded(
+    study_id, validation_url, headers, max_polls, poll_interval
+):
     last_response_data = None
 
     for _ in range(max_polls + 1):
@@ -2190,8 +2382,12 @@ def ensure_validation_task_succeeded(study_id, validation_url, headers, max_poll
         successful = is_task_successful(response_data)
         if successful is True or "SUCCESS" in status.upper():
             return response_data
-        if successful is False or any(failure in status.upper() for failure in ("FAIL", "REVOKED")):
-            raise SubmissionAPIError(f"Validation task for {study_id} failed. Last state: {format_task_state(response_data)}")
+        if successful is False or any(
+            failure in status.upper() for failure in ("FAIL", "REVOKED")
+        ):
+            raise SubmissionAPIError(
+                f"Validation task for {study_id} failed. Last state: {format_task_state(response_data)}"
+            )
         if is_task_ready(response_data) and successful is not True:
             raise SubmissionAPIError(
                 f"Validation task for {study_id} did not finish successfully. Last state: {format_task_state(response_data)}"
@@ -2213,8 +2409,15 @@ def enrich_validation_errors_with_isa_json(errors, isa_json):
     enriched_errors = []
     for error in errors:
         enriched_error = dict(error)
-        if get_first_present_validation_value(enriched_error, "value", "invalidValue", "actualValue") is None:
-            metadata_path = get_first_validation_value(enriched_error, "jsonPath", "path")
+        if (
+            get_first_present_validation_value(
+                enriched_error, "value", "invalidValue", "actualValue"
+            )
+            is None
+        ):
+            metadata_path = get_first_validation_value(
+                enriched_error, "jsonPath", "path"
+            )
             metadata_value = get_isa_json_value(isa_json, metadata_path)
             if metadata_value is not None:
                 enriched_error["value"] = metadata_value
@@ -2226,7 +2429,11 @@ def collect_validation_errors(value, section_name="", assume_error=False):
     errors = []
     if isinstance(value, list):
         for item in value:
-            errors.extend(collect_validation_errors(item, section_name=section_name, assume_error=assume_error))
+            errors.extend(
+                collect_validation_errors(
+                    item, section_name=section_name, assume_error=assume_error
+                )
+            )
         return errors
 
     if not isinstance(value, dict):
@@ -2238,7 +2445,9 @@ def collect_validation_errors(value, section_name="", assume_error=False):
         or value.get("context")
         or section_name
     )
-    if is_validation_error_item(value) or (assume_error and has_validation_message(value)):
+    if is_validation_error_item(value) or (
+        assume_error and has_validation_message(value)
+    ):
         error = dict(value)
         if current_section:
             error.setdefault("section", current_section)
@@ -2254,9 +2463,21 @@ def collect_validation_errors(value, section_name="", assume_error=False):
                 )
             )
 
-    for key in ("content", "taskResult", "task_result", "messages", "validation", "validations", "report", "reports", "children"):
+    for key in (
+        "content",
+        "taskResult",
+        "task_result",
+        "messages",
+        "validation",
+        "validations",
+        "report",
+        "reports",
+        "children",
+    ):
         if key in value:
-            errors.extend(collect_validation_errors(value[key], section_name=current_section))
+            errors.extend(
+                collect_validation_errors(value[key], section_name=current_section)
+            )
 
     return errors
 
@@ -2267,7 +2488,12 @@ def is_validation_error_item(value):
 
     for key in ("type", "status", "severity", "level"):
         indicator = value.get(key)
-        if isinstance(indicator, str) and indicator.upper() in ("ERROR", "FAIL", "FAILED", "FATAL"):
+        if isinstance(indicator, str) and indicator.upper() in (
+            "ERROR",
+            "FAIL",
+            "FAILED",
+            "FATAL",
+        ):
             return True
     return False
 
@@ -2336,8 +2562,12 @@ def format_validation_location(error):
         "filename",
         "fileName",
     )
-    line = get_first_validation_value(error, "line", "lineNumber", "line_number", "row", "rowNumber", "row_number")
-    column = get_first_validation_value(error, "column", "columnNumber", "column_number", "col")
+    line = get_first_validation_value(
+        error, "line", "lineNumber", "line_number", "row", "rowNumber", "row_number"
+    )
+    column = get_first_validation_value(
+        error, "column", "columnNumber", "column_number", "col"
+    )
 
     location = str(metadata_file) if metadata_file else ""
     if line not in (None, ""):
@@ -2404,7 +2634,9 @@ def get_validation_error_rule(error):
 
 
 def get_validation_error_value(error):
-    return get_first_present_validation_value(error, "value", "values", "invalidValue", "actualValue")
+    return get_first_present_validation_value(
+        error, "value", "values", "invalidValue", "actualValue"
+    )
 
 
 def format_validation_detail_value(value):
@@ -2437,7 +2669,7 @@ def parse_metadata_path(metadata_path):
     if metadata_path.startswith("/"):
         return [token for token in metadata_path.strip("/").split("/") if token]
 
-    path = metadata_path[2:] if metadata_path.startswith("$.") else metadata_path
+    path = metadata_path.removeprefix("$.")
     tokens = []
     current_token = []
     index_token = []
@@ -2489,7 +2721,9 @@ def get_validation_root_causes(errors):
         rule = get_validation_error_rule(error)
         if rule:
             root_cause["rule"] = rule
-        column_index = get_first_validation_value(error, "sourceColumnIndex", "source_column_index")
+        column_index = get_first_validation_value(
+            error, "sourceColumnIndex", "source_column_index"
+        )
         if column_index not in (None, ""):
             root_cause["columnIndex"] = column_index
         invalid_value = get_validation_error_value(error)
@@ -2500,7 +2734,11 @@ def get_validation_root_causes(errors):
 
 
 def get_default_validation_report_path(study_id):
-    return DEFAULT_LOCAL_SUBMISSION_CACHE_PATH / study_id / f"{study_id}_validation_report.json"
+    return (
+        DEFAULT_LOCAL_SUBMISSION_CACHE_PATH
+        / study_id
+        / f"{study_id}_validation_report.json"
+    )
 
 
 def get_default_isa_json_path(study_id):
@@ -2512,7 +2750,9 @@ def get_validation_result(study_id, report, isa_json=None, include_root_causes=F
         return report
 
     content = report.get("content")
-    if isinstance(content, dict) and ("taskResult" in content or "task_result" in content):
+    if isinstance(content, dict) and (
+        "taskResult" in content or "task_result" in content
+    ):
         validation_result = content.get("taskResult") or content.get("task_result")
     else:
         validation_result = report
@@ -2531,7 +2771,13 @@ def get_validation_result(study_id, report, isa_json=None, include_root_causes=F
     return output
 
 
-def save_validation_report(study_id, report, validation_file_path=None, isa_json=None, include_root_causes=False):
+def save_validation_report(
+    study_id,
+    report,
+    validation_file_path=None,
+    isa_json=None,
+    include_root_causes=False,
+):
     default_path = get_default_validation_report_path(study_id)
     output_path = resolve_json_output_path(
         validation_file_path,
@@ -2539,10 +2785,14 @@ def save_validation_report(study_id, report, validation_file_path=None, isa_json
         default_path.name,
     )
     if output_path.exists() and output_path.is_dir():
-        raise SubmissionAPIError(f"Validation report path is a directory: {output_path}")
+        raise SubmissionAPIError(
+            f"Validation report path is a directory: {output_path}"
+        )
 
     return write_json_file(
-        get_validation_result(study_id, report, isa_json=isa_json, include_root_causes=include_root_causes),
+        get_validation_result(
+            study_id, report, isa_json=isa_json, include_root_causes=include_root_causes
+        ),
         output_path,
     )
 

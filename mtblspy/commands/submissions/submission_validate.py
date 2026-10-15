@@ -3,6 +3,11 @@ from pathlib import Path
 
 import click
 
+from mtblspy.commands.submissions.cli_utils import (
+    create_submission_client,
+    get_submission_client,
+    jwt_token_option,
+)
 from mtblspy.commands.submissions.client import (
     DEFAULT_LOCAL_SUBMISSION_DATA_PATH,
     VALIDATION_MAX_POLLS,
@@ -15,7 +20,6 @@ from mtblspy.commands.submissions.local_validation import (
     LOCAL_VALIDATION_TIMEOUT_SECONDS,
     run_local_validation,
 )
-from mtblspy.commands.submissions.cli_utils import create_submission_client, get_submission_client, jwt_token_option
 
 
 @click.command(name="validate", short_help="Run study validation.")
@@ -68,7 +72,9 @@ from mtblspy.commands.submissions.cli_utils import create_submission_client, get
     type=str,
     help="MetaboLights submission REST API endpoint for remote validation, overriding configured defaults.",
 )
-@click.option("--base-url", help="MetaboLights REST API base URL used to select credentials.")
+@click.option(
+    "--base-url", help="MetaboLights REST API base URL used to select credentials."
+)
 @click.option(
     "--validation-bundle-path",
     "--mtbls-validation-bundle-path",
@@ -110,14 +116,24 @@ from mtblspy.commands.submissions.cli_utils import create_submission_client, get
     type=click.Path(exists=True, dir_okay=False),
     help="Text file with validation rule identifiers or metadata filenames to ignore.",
 )
-@click.option("--max-polls", default=VALIDATION_MAX_POLLS, show_default=True, help="Maximum remote validation status checks.")
+@click.option(
+    "--max-polls",
+    default=VALIDATION_MAX_POLLS,
+    show_default=True,
+    help="Maximum remote validation status checks.",
+)
 @click.option(
     "--poll-interval",
     default=VALIDATION_POLL_INTERVAL_SECONDS,
     show_default=True,
     help="Seconds between remote validation status checks.",
 )
-@click.option("--timeout", default=LOCAL_VALIDATION_TIMEOUT_SECONDS, show_default=True, help="Local validation timeout in seconds.")
+@click.option(
+    "--timeout",
+    default=LOCAL_VALIDATION_TIMEOUT_SECONDS,
+    show_default=True,
+    help="Local validation timeout in seconds.",
+)
 @click.option(
     "--output",
     "--validation-file-path",

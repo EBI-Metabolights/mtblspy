@@ -4,7 +4,11 @@ from pathlib import Path
 import click
 from tqdm import tqdm
 
-from mtblspy.commands.submissions.cli_utils import create_submission_client, get_submission_client, jwt_token_option
+from mtblspy.commands.submissions.cli_utils import (
+    create_submission_client,
+    get_submission_client,
+    jwt_token_option,
+)
 from mtblspy.commands.submissions.exceptions import SubmissionError
 
 
@@ -18,7 +22,9 @@ def download_submission(ctx, study_id):
 
 
 @download_submission.command(name="metadata")
-@click.option("--base-url", help="MetaboLights REST API base URL used to select credentials.")
+@click.option(
+    "--base-url", help="MetaboLights REST API base URL used to select credentials."
+)
 @click.option(
     "--files",
     "selected_files",
@@ -38,7 +44,12 @@ def download_metadata(ctx, base_url, selected_files, target_path, jwt_token):
     """Download ISA-Tab metadata files and result files."""
     study_id = ctx.obj["study_id"]
     try:
-        client = get_submission_client(ctx, base_url=base_url, jwt_token=jwt_token, factory=create_submission_client)
+        client = get_submission_client(
+            ctx,
+            base_url=base_url,
+            jwt_token=jwt_token,
+            factory=create_submission_client,
+        )
         result = client.download_metadata_files(
             study_id,
             target_path=target_path,
@@ -53,7 +64,9 @@ def download_metadata(ctx, base_url, selected_files, target_path, jwt_token):
 
 
 @download_submission.command(name="data")
-@click.option("--base-url", help="MetaboLights REST API base URL used to select credentials.")
+@click.option(
+    "--base-url", help="MetaboLights REST API base URL used to select credentials."
+)
 @click.option(
     "--files",
     "selected_files",
@@ -81,10 +94,14 @@ def download_metadata(ctx, base_url, selected_files, target_path, jwt_token):
 )
 @jwt_token_option
 @click.pass_context
-def download_data(ctx, base_url, selected_files, download_all, target_path, progress, jwt_token):
+def download_data(
+    ctx, base_url, selected_files, download_all, target_path, progress, jwt_token
+):
     """Download study data files from the private FTP area."""
     study_id = ctx.obj["study_id"]
-    progress_bar = DataDownloadProgress(enabled=progress and is_progress_stream_interactive())
+    progress_bar = DataDownloadProgress(
+        enabled=progress and is_progress_stream_interactive()
+    )
     try:
         if selected_files and download_all:
             raise click.ClickException("Use either --files or --all, not both.")
@@ -93,7 +110,12 @@ def download_data(ctx, base_url, selected_files, download_all, target_path, prog
                 "Data download requires --files because study data files can be large. "
                 "Use --files with comma-separated file or folder names, or pass --all to download all data files."
             )
-        client = get_submission_client(ctx, base_url=base_url, jwt_token=jwt_token, factory=create_submission_client)
+        client = get_submission_client(
+            ctx,
+            base_url=base_url,
+            jwt_token=jwt_token,
+            factory=create_submission_client,
+        )
         download_kwargs = {
             "target_path": target_path,
             "selected_files": selected_files,
@@ -133,7 +155,10 @@ def build_download_message(result):
     file_count = len(result.downloaded_files)
     parts = [f"Downloaded {file_count} file(s) for {result.study_id}."]
     if result.missing_files:
-        parts.append(f"Missing {len(result.missing_files)} requested file(s): " + ", ".join(result.missing_files))
+        parts.append(
+            f"Missing {len(result.missing_files)} requested file(s): "
+            + ", ".join(result.missing_files)
+        )
     if result.errors:
         parts.append(f"Encountered {len(result.errors)} error(s).")
     return " ".join(parts)
@@ -174,7 +199,9 @@ class DataDownloadProgress:
             self.start(0)
         if self.progress_bar.disable:
             return
-        self.progress_bar.set_postfix_str(format_progress_item(path, status), refresh=False)
+        self.progress_bar.set_postfix_str(
+            format_progress_item(path, status), refresh=False
+        )
         self.progress_bar.update(1)
 
     def close(self):

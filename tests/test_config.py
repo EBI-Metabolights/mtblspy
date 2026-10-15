@@ -76,7 +76,9 @@ def test_get_config_uses_default_base_url(monkeypatch):
 def test_save_config_stores_auth_values_and_base_url_in_keyring(monkeypatch):
     fake_store = configure_fake_credentials(monkeypatch)
 
-    save_config(api_key="test-key", base_url="https://test.com", user_name="user@example.org")
+    save_config(
+        api_key="test-key", base_url="https://test.com", user_name="user@example.org"
+    )
 
     config = get_config()
     assert config == {"base_url": "https://test.com"}
@@ -141,8 +143,14 @@ def test_save_config_stores_auth_values_in_url_specific_store(monkeypatch):
     assert default_store.user_name is None
     assert custom_store.api_token == "custom-key"
     assert custom_store.user_name == "user@example.org"
-    assert get_api_key(credential_base_url="https://test.com/metabolights/ws") == "custom-key"
-    assert get_user_name(credential_base_url="https://test.com/metabolights/ws") == "user@example.org"
+    assert (
+        get_api_key(credential_base_url="https://test.com/metabolights/ws")
+        == "custom-key"
+    )
+    assert (
+        get_user_name(credential_base_url="https://test.com/metabolights/ws")
+        == "user@example.org"
+    )
 
 
 def test_env_vars_override(monkeypatch):
@@ -170,14 +178,18 @@ def test_refresh_token_uses_keyring(monkeypatch):
 
     save_refresh_token("https://test.com/metabolights/ws3", "refresh-token")
 
-    assert fake_store.refresh_tokens == {"https://test.com/metabolights/ws3": "refresh-token"}
+    assert fake_store.refresh_tokens == {
+        "https://test.com/metabolights/ws3": "refresh-token"
+    }
     assert get_refresh_token("https://test.com/metabolights/ws3") == "refresh-token"
 
 
 def test_clear_session_uses_keyring(monkeypatch):
     fake_store = configure_fake_credentials(monkeypatch)
 
-    clear_session("https://test.com/metabolights/ws", "https://test.com/metabolights/ws3")
+    clear_session(
+        "https://test.com/metabolights/ws", "https://test.com/metabolights/ws3"
+    )
 
     assert fake_store.cleared_session == (
         "https://test.com/metabolights/ws",

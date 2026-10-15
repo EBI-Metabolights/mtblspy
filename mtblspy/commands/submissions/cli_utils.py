@@ -3,7 +3,10 @@ from pathlib import Path
 
 import click
 
-from mtblspy.commands.submissions.client import SubmissionClient, format_validation_error
+from mtblspy.commands.submissions.client import (
+    SubmissionClient,
+    format_validation_error,
+)
 
 SUBMISSION_CONTEXT_KEY = "submission_context"
 
@@ -12,7 +15,9 @@ SUBMISSION_CONTEXT_KEY = "submission_context"
 class SubmissionClickContext:
     """Shared Click context for submission commands."""
 
-    _clients: dict[tuple[str | None, str | None], SubmissionClient] = field(default_factory=dict)
+    _clients: dict[tuple[str | None, str | None], SubmissionClient] = field(
+        default_factory=dict
+    )
 
     def create_client(self, base_url=None, jwt_token=None, factory=None):
         factory = factory or create_submission_client

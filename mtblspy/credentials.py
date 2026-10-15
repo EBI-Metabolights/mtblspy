@@ -88,7 +88,9 @@ class CredentialStore:
         except PasswordDeleteError:
             pass
         except KeyringError as exc:
-            raise CredentialStorageError(f"Unable to delete credentials: {exc}") from exc
+            raise CredentialStorageError(
+                f"Unable to delete credentials: {exc}"
+            ) from exc
 
     @staticmethod
     def _jwt_username(rest_api_base_url):

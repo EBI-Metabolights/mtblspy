@@ -19,7 +19,9 @@ from mtblspy.commands.submissions.client import (
 )
 from mtblspy.commands.submissions.exceptions import SubmissionAPIError
 
-DEFAULT_VALIDATION_BUNDLE_URL = "https://ebi-metabolights.github.io/mtbls-validation/bundle.tar.gz"
+DEFAULT_VALIDATION_BUNDLE_URL = (
+    "https://ebi-metabolights.github.io/mtbls-validation/bundle.tar.gz"
+)
 DEFAULT_VALIDATION_BUNDLE_PATH = "./bundle.tar.gz"
 LOCAL_VALIDATION_TIMEOUT_SECONDS = 120
 
@@ -57,11 +59,17 @@ def run_local_validation(
 ):
     study_id = normalize_study_id(study_id)
     default_cache_directory = DEFAULT_LOCAL_SUBMISSION_CACHE_PATH / study_id
-    metadata_path = resolve_metadata_path(study_id, metadata_path, default_submission_data_path)
+    metadata_path = resolve_metadata_path(
+        study_id, metadata_path, default_submission_data_path
+    )
     if not data_files_path:
         data_files_path = metadata_path / "FILES"
-    validation_input = load_local_validation_input(study_id, metadata_path, data_files_path)
-    validation_input_path = save_local_validation_input(study_id, validation_input, validation_input_path)
+    validation_input = load_local_validation_input(
+        study_id, metadata_path, data_files_path
+    )
+    validation_input_path = save_local_validation_input(
+        study_id, validation_input, validation_input_path
+    )
     if validation_wasm_path or validation_wasm_url:
         validation_result = run_wasm_validation(
             validation_input_path,
@@ -80,8 +88,12 @@ def run_local_validation(
             timeout=timeout,
         )
 
-    overridden_rule_ids, overridden_files = get_overrides(config_file, overridden_rules_file_path)
-    errors, overrides = split_validation_errors(validation_result, overridden_rule_ids, overridden_files)
+    overridden_rule_ids, overridden_files = get_overrides(
+        config_file, overridden_rules_file_path
+    )
+    errors, overrides = split_validation_errors(
+        validation_result, overridden_rule_ids, overridden_files
+    )
     report = {
         "accession": study_id,
         "status": "failed" if errors else "success",
@@ -103,26 +115,38 @@ def run_local_validation(
     )
 
 
-def resolve_metadata_path(study_id, metadata_path=None, default_submission_data_path=None):
+def resolve_metadata_path(
+    study_id, metadata_path=None, default_submission_data_path=None
+):
     if metadata_path:
         return Path(metadata_path).expanduser().resolve()
-    default_data_path = Path(default_submission_data_path).expanduser() if default_submission_data_path else DEFAULT_LOCAL_SUBMISSION_DATA_PATH
+    default_data_path = (
+        Path(default_submission_data_path).expanduser()
+        if default_submission_data_path
+        else DEFAULT_LOCAL_SUBMISSION_DATA_PATH
+    )
     return (default_data_path / study_id).resolve()
 
 
 def load_local_validation_input(study_id, metadata_path, data_files_path):
     metadata_path = Path(metadata_path)
     if not metadata_path.exists() or not metadata_path.is_dir():
-        raise SubmissionAPIError(f"Metadata path does not exist or is not a directory: {metadata_path}")
+        raise SubmissionAPIError(
+            f"Metadata path does not exist or is not a directory: {metadata_path}"
+        )
 
     investigation_path = get_investigation_file(metadata_path)
     sample_files = sorted(metadata_path.glob("s_*.txt"))
     assay_files = sorted(metadata_path.glob("a_*.txt"))
     assignment_files = sorted(metadata_path.glob("m_*.tsv"))
 
-    samples = {path.name: build_table_file(path, file_type="sample") for path in sample_files}
+    samples = {
+        path.name: build_table_file(path, file_type="sample") for path in sample_files
+    }
     assays = {path.name: build_assay_file(path) for path in assay_files}
-    metabolite_assignments = {path.name: build_assignment_file(path) for path in assignment_files}
+    metabolite_assignments = {
+        path.name: build_assignment_file(path) for path in assignment_files
+    }
 
     referenced_assignment_files = sorted(
         {
@@ -163,11 +187,15 @@ def load_local_validation_input(study_id, metadata_path, data_files_path):
         "referencedAssignmentFiles": referenced_assignment_files,
         "referencedRawFiles": referenced_raw_files,
         "referencedDerivedFiles": referenced_derived_files,
-        "foldersInHierarchy": get_folders_in_hierarchy(referenced_raw_files + referenced_derived_files),
+        "foldersInHierarchy": get_folders_in_hierarchy(
+            referenced_raw_files + referenced_derived_files
+        ),
         "metaboliteAssignments": metabolite_assignments,
         "tags": [],
         "studyDbMetadata": build_study_db_metadata(study_id),
-        "studyFolderMetadata": build_study_folder_metadata(metadata_path, data_files_path),
+        "studyFolderMetadata": build_study_folder_metadata(
+            metadata_path, data_files_path
+        ),
         "folderReaderMessages": [],
         "dbReaderMessages": [],
         "hasDbMetadata": False,
@@ -182,7 +210,9 @@ def load_local_validation_input(study_id, metadata_path, data_files_path):
 def get_investigation_file(metadata_path):
     investigation_files = sorted(metadata_path.glob("i_*.txt"))
     if not investigation_files:
-        raise SubmissionAPIError(f"No investigation file matching i_*.txt found in {metadata_path}")
+        raise SubmissionAPIError(
+            f"No investigation file matching i_*.txt found in {metadata_path}"
+        )
     return investigation_files[0]
 
 
@@ -207,11 +237,17 @@ def build_investigation(investigation_path):
         "identifier": first_value(investigation_values, "Investigation Identifier"),
         "title": first_value(investigation_values, "Investigation Title"),
         "description": first_value(investigation_values, "Investigation Description"),
-        "submissionDate": first_value(investigation_values, "Investigation Submission Date"),
-        "publicReleaseDate": first_value(investigation_values, "Investigation Public Release Date"),
+        "submissionDate": first_value(
+            investigation_values, "Investigation Submission Date"
+        ),
+        "publicReleaseDate": first_value(
+            investigation_values, "Investigation Public Release Date"
+        ),
         "ontologySourceReferences": {
             "comments": [],
-            "references": build_ontology_source_references(sections.get("ONTOLOGY SOURCE REFERENCE", [])),
+            "references": build_ontology_source_references(
+                sections.get("ONTOLOGY SOURCE REFERENCE", [])
+            ),
         },
         "investigationPublications": {"comments": [], "publications": []},
         "investigationContacts": {"comments": [], "people": []},
@@ -222,7 +258,9 @@ def build_investigation(investigation_path):
                 "title": first_value(study_values, "Study Title"),
                 "description": first_value(study_values, "Study Description"),
                 "submissionDate": first_value(study_values, "Study Submission Date"),
-                "publicReleaseDate": first_value(study_values, "Study Public Release Date"),
+                "publicReleaseDate": first_value(
+                    study_values, "Study Public Release Date"
+                ),
                 "fileName": first_value(study_values, "Study File Name"),
                 "studyCategory": first_value(study_comments, "Study Category"),
                 "templateVersion": first_value(study_comments, "Template Version"),
@@ -239,11 +277,15 @@ def build_investigation(investigation_path):
                 "characteristicTypes": [],
                 "studyDesignDescriptors": {
                     "comments": [],
-                    "designTypes": build_study_design_descriptors(sections.get("STUDY DESIGN DESCRIPTORS", [])),
+                    "designTypes": build_study_design_descriptors(
+                        sections.get("STUDY DESIGN DESCRIPTORS", [])
+                    ),
                 },
                 "studyPublications": {
                     "comments": [],
-                    "publications": build_study_publications(sections.get("STUDY PUBLICATIONS", [])),
+                    "publications": build_study_publications(
+                        sections.get("STUDY PUBLICATIONS", [])
+                    ),
                 },
                 "studyFactors": {
                     "comments": [],
@@ -251,11 +293,15 @@ def build_investigation(investigation_path):
                 },
                 "studyAssays": {
                     "comments": [],
-                    "assays": build_study_assay_entries(sections.get("STUDY ASSAYS", [])),
+                    "assays": build_study_assay_entries(
+                        sections.get("STUDY ASSAYS", [])
+                    ),
                 },
                 "studyProtocols": {
                     "comments": [],
-                    "protocols": build_study_protocols(sections.get("STUDY PROTOCOLS", [])),
+                    "protocols": build_study_protocols(
+                        sections.get("STUDY PROTOCOLS", [])
+                    ),
                 },
                 "studyContacts": {
                     "comments": [],
@@ -320,10 +366,14 @@ def build_study_assay_entries(rows):
     values = section_values(rows)
     file_names = values.get("Study Assay File Name", [])
     measurement_types = values.get("Study Assay Measurement Type", [])
-    measurement_accessions = values.get("Study Assay Measurement Type Term Accession Number", [])
+    measurement_accessions = values.get(
+        "Study Assay Measurement Type Term Accession Number", []
+    )
     measurement_sources = values.get("Study Assay Measurement Type Term Source REF", [])
     technology_types = values.get("Study Assay Technology Type", [])
-    technology_accessions = values.get("Study Assay Technology Type Term Accession Number", [])
+    technology_accessions = values.get(
+        "Study Assay Technology Type Term Accession Number", []
+    )
     technology_sources = values.get("Study Assay Technology Type Term Source REF", [])
     platforms = values.get("Study Assay Technology Platform", [])
 
@@ -363,7 +413,9 @@ def build_study_design_descriptors(rows):
     descriptor_sources = comments.get("Study Design Source", [])
 
     descriptors = []
-    for index in range(max_length(terms, accessions, sources, categories, descriptor_sources)):
+    for index in range(
+        max_length(terms, accessions, sources, categories, descriptor_sources)
+    ):
         term = get_index(terms, index)
         if term:
             descriptors.append(
@@ -401,7 +453,14 @@ def build_study_publications(rows):
                 get_index(sources, index),
             ),
         }
-        if any([publication["pubMedId"], publication["doi"], publication["authorList"], publication["title"]]):
+        if any(
+            [
+                publication["pubMedId"],
+                publication["doi"],
+                publication["authorList"],
+                publication["title"],
+            ]
+        ):
             publications.append(publication)
     return publications
 
@@ -436,9 +495,13 @@ def build_study_protocols(rows):
     uris = values.get("Study Protocol URI", [])
     versions = values.get("Study Protocol Version", [])
     parameter_names = values.get("Study Protocol Parameters Name", [])
-    parameter_accessions = values.get("Study Protocol Parameters Name Term Accession Number", [])
+    parameter_accessions = values.get(
+        "Study Protocol Parameters Name Term Accession Number", []
+    )
     parameter_sources = values.get("Study Protocol Parameters Name Term Source REF", [])
-    parameter_value_formats = values.get("Comment[Study Protocol Parameters Value Format]", [])
+    parameter_value_formats = values.get(
+        "Comment[Study Protocol Parameters Value Format]", []
+    )
 
     protocols = []
     for index in range(max_length(names, types, descriptions, parameter_names)):
@@ -462,7 +525,12 @@ def build_study_protocols(rows):
             ),
             "components": [],
         }
-        if name or protocol_type["term"] or protocol["description"] or protocol["parameters"]:
+        if (
+            name
+            or protocol_type["term"]
+            or protocol["description"]
+            or protocol["parameters"]
+        ):
             protocols.append(protocol)
     return protocols
 
@@ -507,7 +575,9 @@ def build_study_contacts(rows):
     affiliation_ror_ids = comments.get("Study Person Affiliation ROR ID", [])
 
     people = []
-    for index in range(max_length(last_names, first_names, emails, affiliations, roles)):
+    for index in range(
+        max_length(last_names, first_names, emails, affiliations, roles)
+    ):
         person = {
             "lastName": get_index(last_names, index),
             "firstName": get_index(first_names, index),
@@ -526,7 +596,15 @@ def build_study_contacts(rows):
             "additionalEmails": [],
             "affiliationRorId": get_index(affiliation_ror_ids, index),
         }
-        if any([person["lastName"], person["firstName"], person["email"], person["affiliation"], person["roles"]]):
+        if any(
+            [
+                person["lastName"],
+                person["firstName"],
+                person["email"],
+                person["affiliation"],
+                person["roles"],
+            ]
+        ):
             people.append(person)
     return people
 
@@ -536,7 +614,9 @@ def build_contact_roles(roles, accessions="", sources=""):
     accessions = split_multi_value(accessions)
     sources = split_multi_value(sources)
     return [
-        ontology_annotation(role, get_index(accessions, index), get_index(sources, index))
+        ontology_annotation(
+            role, get_index(accessions, index), get_index(sources, index)
+        )
         for index, role in enumerate(roles)
         if role
     ]
@@ -598,9 +678,19 @@ def build_assay_file(path):
             "referencedAssignmentFiles": sorted(set(assignment_files)),
             "referencedRawFiles": sorted(set(raw_files)),
             "referencedDerivedFiles": sorted(set(derived_files)),
-            "referencedRawFileExtensions": sorted({Path(value).suffix.lower() for value in raw_files if Path(value).suffix}),
+            "referencedRawFileExtensions": sorted(
+                {
+                    Path(value).suffix.lower()
+                    for value in raw_files
+                    if Path(value).suffix
+                }
+            ),
             "referencedDerivedFileExtensions": sorted(
-                {Path(value).suffix.lower() for value in derived_files if Path(value).suffix}
+                {
+                    Path(value).suffix.lower()
+                    for value in derived_files
+                    if Path(value).suffix
+                }
             ),
             "assayTechnique": infer_assay_technique(path, table_file["table"]),
             "numberOfAssayRows": table_file["table"]["totalRowCount"],
@@ -624,7 +714,11 @@ ASSIGNMENT_FILE_COLUMNS = {"Metabolite Assignment File"}
 
 
 def parse_isa_table(path):
-    rows = [split_isa_line(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    rows = [
+        split_isa_line(line)
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
     headers = rows[0] if rows else []
     data_rows = rows[1:]
     columns = unique_column_names(headers)
@@ -681,7 +775,9 @@ def isa_table_headers(headers, columns):
             continue
 
         additional_columns = linked_columns_after(headers, index)
-        linked_column_indexes.update(range(index + 1, index + 1 + len(additional_columns)))
+        linked_column_indexes.update(
+            range(index + 1, index + 1 + len(additional_columns))
+        )
         table_headers.append(
             isa_table_header(
                 index,
@@ -716,10 +812,18 @@ def isa_table_header(
 
 def linked_columns_after(headers, index):
     next_headers = headers[index + 1 : index + 4]
-    if len(next_headers) >= 3 and is_unit_header(next_headers[0]) and is_term_source_header(next_headers[1]):
+    if (
+        len(next_headers) >= 3
+        and is_unit_header(next_headers[0])
+        and is_term_source_header(next_headers[1])
+    ):
         if is_term_accession_header(next_headers[2]):
             return ["Unit", "Term Source REF", "Term Accession Number"]
-    if len(next_headers) >= 2 and is_term_source_header(next_headers[0]) and is_term_accession_header(next_headers[1]):
+    if (
+        len(next_headers) >= 2
+        and is_term_source_header(next_headers[0])
+        and is_term_accession_header(next_headers[1])
+    ):
         return ["Term Source REF", "Term Accession Number"]
     return []
 
@@ -776,7 +880,9 @@ def table_file_summary(table, file_type):
     if file_type == "assay":
         return {
             "sampleNames": sorted(set(get_column_values(rows, {"Sample Name"}))),
-            "assayNames": sorted(set(get_column_values(rows, {"Assay Name", "NMR Assay Name"}))),
+            "assayNames": sorted(
+                set(get_column_values(rows, {"Assay Name", "NMR Assay Name"}))
+            ),
         }
     return {}
 
@@ -788,7 +894,8 @@ def build_assignment_file(path):
     assigned_rows = [
         row
         for row in rows
-        if row.get("metabolite_identification", "") and row.get("database_identifier", "")
+        if row.get("metabolite_identification", "")
+        and row.get("database_identifier", "")
     ]
     assignments = {
         row.get("metabolite_identification", ""): row.get("database_identifier", "")
@@ -801,7 +908,9 @@ def build_assignment_file(path):
             "assayTechnique": infer_assay_technique(path, table_file["table"]),
             "numberOfRows": table_file["table"]["totalRowCount"],
             "numberOfAssignedRows": len(assigned_rows),
-            "numberOfUnassignedRows": max(table_file["table"]["totalRowCount"] - len(assigned_rows), 0),
+            "numberOfUnassignedRows": max(
+                table_file["table"]["totalRowCount"] - len(assigned_rows), 0
+            ),
         }
     )
     return table_file
@@ -852,11 +961,15 @@ def organism_pairs(table):
     for row in table_rows(table):
         pair = {
             "organism": row_ontology_item(table, row, "Characteristics[Organism]"),
-            "organismPart": row_ontology_item(table, row, "Characteristics[Organism part]"),
+            "organismPart": row_ontology_item(
+                table, row, "Characteristics[Organism part]"
+            ),
             "variant": row_ontology_item(table, row, "Characteristics[Variant]"),
             "sampleType": row_ontology_item(table, row, "Characteristics[Sample type]"),
         }
-        if (pair["organism"]["term"] or pair["organismPart"]["term"]) and pair not in pairs:
+        if (
+            pair["organism"]["term"] or pair["organismPart"]["term"]
+        ) and pair not in pairs:
             pairs.append(pair)
     return pairs
 
@@ -995,7 +1108,11 @@ def build_study_folder_metadata(metadata_path, data_files_path):
         data_path = metadata_path / data_path
     if data_path.exists():
         for path in sorted(data_path.rglob("*")):
-            relative_path = path.relative_to(metadata_path).as_posix() if path.is_relative_to(metadata_path) else path.name
+            relative_path = (
+                path.relative_to(metadata_path).as_posix()
+                if path.is_relative_to(metadata_path)
+                else path.name
+            )
             descriptor = file_descriptor(path, relative_path)
             if path.is_dir():
                 folders[relative_path] = descriptor
@@ -1016,7 +1133,9 @@ def file_descriptor(path, relative_path):
     return {
         "filePath": relative_path,
         "baseName": path.name,
-        "parentDirectory": str(Path(relative_path).parent) if str(Path(relative_path).parent) != "." else "",
+        "parentDirectory": str(Path(relative_path).parent)
+        if str(Path(relative_path).parent) != "."
+        else "",
         "extension": path.suffix,
         "sizeInBytes": stat.st_size,
         "isDirectory": path.is_dir(),
@@ -1043,7 +1162,9 @@ def get_index(values, index, default=""):
 def save_local_validation_input(study_id, validation_input, validation_input_path=None):
     default_directory = DEFAULT_LOCAL_SUBMISSION_CACHE_PATH / study_id
     default_filename = f"{study_id}_local_validation_input.json"
-    output_path = resolve_json_output_path(validation_input_path, default_directory, default_filename)
+    output_path = resolve_json_output_path(
+        validation_input_path, default_directory, default_filename
+    )
     return write_json_file(validation_input, output_path)
 
 
@@ -1055,7 +1176,9 @@ def run_opa_validation(
     opa_executable_path="opa",
     timeout=LOCAL_VALIDATION_TIMEOUT_SECONDS,
 ):
-    validation_bundle_path = ensure_validation_bundle(validation_bundle_path, validation_bundle_url, refetch_validation_bundle)
+    validation_bundle_path = ensure_validation_bundle(
+        validation_bundle_path, validation_bundle_url, refetch_validation_bundle
+    )
     command = [
         opa_executable_path,
         "eval",
@@ -1066,7 +1189,9 @@ def run_opa_validation(
         str(validation_input_path),
     ]
     try:
-        task = subprocess.run(command, capture_output=True, text=True, check=True, timeout=timeout)
+        task = subprocess.run(
+            command, capture_output=True, text=True, check=True, timeout=timeout
+        )
     except FileNotFoundError as exc:
         raise SubmissionAPIError(
             f"OPA executable not found: {opa_executable_path}. "
@@ -1076,18 +1201,24 @@ def run_opa_validation(
         raise SubmissionAPIError("The local validation process timed out.") from exc
     except subprocess.CalledProcessError as exc:
         message = exc.stderr or exc.stdout or str(exc)
-        raise SubmissionAPIError(f"The local validation process failed: {message}") from exc
+        raise SubmissionAPIError(
+            f"The local validation process failed: {message}"
+        ) from exc
 
     return parse_opa_validation_output(task.stdout)
 
 
-def ensure_validation_bundle(validation_bundle_path, validation_bundle_url, refetch_validation_bundle=False):
+def ensure_validation_bundle(
+    validation_bundle_path, validation_bundle_url, refetch_validation_bundle=False
+):
     validation_bundle_path = Path(validation_bundle_path).expanduser().resolve()
     if validation_bundle_path.exists() and not refetch_validation_bundle:
         return validation_bundle_path
 
     if not validation_bundle_url:
-        raise SubmissionAPIError(f"Validation bundle does not exist on {validation_bundle_path}")
+        raise SubmissionAPIError(
+            f"Validation bundle does not exist on {validation_bundle_path}"
+        )
     validation_bundle_path.parent.mkdir(parents=True, exist_ok=True)
     response = requests.get(validation_bundle_url, timeout=60)
     response.raise_for_status()
@@ -1103,7 +1234,9 @@ def run_wasm_validation(
     wasmtime_executable_path="wasmtime",
     opa_executable_path="opa",
 ):
-    validation_wasm_artifact = ensure_validation_wasm(validation_wasm_path, validation_wasm_url)
+    validation_wasm_artifact = ensure_validation_wasm(
+        validation_wasm_path, validation_wasm_url
+    )
     if validation_wasm_artifact.artifact_type == "opa_wasm_bundle":
         return run_opa_wasm_bundle_validation(
             validation_input_path,
@@ -1126,12 +1259,16 @@ def run_wasm_validation(
         str(Path(validation_input_path).expanduser().resolve()),
     ]
     try:
-        task = subprocess.run(command, capture_output=True, text=True, check=True, timeout=timeout)
+        task = subprocess.run(
+            command, capture_output=True, text=True, check=True, timeout=timeout
+        )
     except subprocess.TimeoutExpired as exc:
         raise SubmissionAPIError("The WASM validation process timed out.") from exc
     except subprocess.CalledProcessError as exc:
         message = exc.stderr or exc.stdout or str(exc)
-        raise SubmissionAPIError(f"The WASM validation process failed: {message}") from exc
+        raise SubmissionAPIError(
+            f"The WASM validation process failed: {message}"
+        ) from exc
 
     return parse_wasm_validation_output(task.stdout)
 
@@ -1154,7 +1291,9 @@ def run_opa_wasm_bundle_validation(
         str(Path(validation_wasm_bundle_path).expanduser().resolve()),
     ]
     try:
-        process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        process = subprocess.Popen(
+            command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+        )
     except FileNotFoundError as exc:
         raise SubmissionAPIError(
             f"OPA executable not found: {opa_executable_path}. "
@@ -1163,7 +1302,12 @@ def run_opa_wasm_bundle_validation(
 
     try:
         wait_for_opa_server(process, f"{base_url}/health", timeout=min(15, timeout))
-        with Path(validation_input_path).expanduser().resolve().open(encoding="utf-8") as file:
+        with (
+            Path(validation_input_path)
+            .expanduser()
+            .resolve()
+            .open(encoding="utf-8") as file
+        ):
             validation_input = json.load(file)
         response = requests.post(
             f"{base_url}/v1/data/metabolights/validation/v2/report/complete_report",
@@ -1180,7 +1324,9 @@ def run_opa_wasm_bundle_validation(
         stop_opa_server(process)
 
     if "result" not in result:
-        raise SubmissionAPIError("WASM validation output did not include a validation result.")
+        raise SubmissionAPIError(
+            "WASM validation output did not include a validation result."
+        )
     return result["result"]
 
 
@@ -1197,7 +1343,11 @@ def wait_for_opa_server(process, health_url, timeout=15):
         if process.poll() is not None:
             stdout, stderr = process.communicate()
             message = stderr or stdout or "OPA server exited before it was ready."
-            if "WebAssembly: unavailable" in message or "engine not found" in message or "wasm" in message.lower():
+            if (
+                "WebAssembly: unavailable" in message
+                or "engine not found" in message
+                or "wasm" in message.lower()
+            ):
                 raise SubmissionAPIError(
                     "OPA WASM bundle validation requires an OPA executable with WebAssembly support. "
                     "The configured OPA executable could not initialize a WASM engine. "
@@ -1211,7 +1361,9 @@ def wait_for_opa_server(process, health_url, timeout=15):
         except requests.RequestException as exc:
             last_error = exc
             time.sleep(0.1)
-    raise SubmissionAPIError(f"The WASM validation process timed out while starting OPA server: {last_error}")
+    raise SubmissionAPIError(
+        f"The WASM validation process timed out while starting OPA server: {last_error}"
+    )
 
 
 def stop_opa_server(process):
@@ -1231,11 +1383,15 @@ def ensure_validation_wasm(validation_wasm_path=None, validation_wasm_url=None):
         if validation_wasm_path.exists():
             return prepare_validation_wasm_artifact(validation_wasm_path)
         if not validation_wasm_url:
-            raise SubmissionAPIError(f"Validation WASM does not exist on {validation_wasm_path}")
+            raise SubmissionAPIError(
+                f"Validation WASM does not exist on {validation_wasm_path}"
+            )
     elif validation_wasm_url:
         validation_wasm_path = DEFAULT_LOCAL_SUBMISSION_CACHE_PATH / "validation.wasm"
     else:
-        raise SubmissionAPIError("Validation WASM path or URL is required for WASM validation.")
+        raise SubmissionAPIError(
+            "Validation WASM path or URL is required for WASM validation."
+        )
 
     response = requests.get(validation_wasm_url, timeout=60)
     response.raise_for_status()
@@ -1269,11 +1425,17 @@ def prepare_validation_wasm_artifact(validation_wasm_path):
         try:
             decompressed_bytes = gzip.decompress(wasm_bytes)
         except OSError as exc:
-            raise SubmissionAPIError(f"Validation WASM is gzip-compressed but could not be decompressed: {exc}") from exc
+            raise SubmissionAPIError(
+                f"Validation WASM is gzip-compressed but could not be decompressed: {exc}"
+            ) from exc
         validation_wasm_path.write_bytes(decompressed_bytes)
         if validation_wasm_path.read_bytes().startswith(b"\x00asm"):
-            return ValidationWasmArtifact(path=validation_wasm_path, artifact_type="wasm")
-    raise SubmissionAPIError(f"Validation WASM is not a valid WebAssembly binary: {validation_wasm_path}")
+            return ValidationWasmArtifact(
+                path=validation_wasm_path, artifact_type="wasm"
+            )
+    raise SubmissionAPIError(
+        f"Validation WASM is not a valid WebAssembly binary: {validation_wasm_path}"
+    )
 
 
 def is_opa_wasm_bundle(path):
@@ -1287,7 +1449,11 @@ def is_opa_wasm_bundle(path):
 
 def gzip_opa_wasm_bundle(bundle_path, bundle_bytes):
     bundle_path = Path(bundle_path).expanduser().resolve()
-    target_path = DEFAULT_LOCAL_SUBMISSION_CACHE_PATH / "validation_wasm_bundle" / f"{sha256_file(bundle_path)[:16]}.tar.gz"
+    target_path = (
+        DEFAULT_LOCAL_SUBMISSION_CACHE_PATH
+        / "validation_wasm_bundle"
+        / f"{sha256_file(bundle_path)[:16]}.tar.gz"
+    )
     if not target_path.exists():
         target_path.parent.mkdir(parents=True, exist_ok=True)
         target_path.write_bytes(gzip.compress(bundle_bytes))
@@ -1311,7 +1477,9 @@ def parse_opa_validation_output(output):
     try:
         return raw_validation_result["result"][0]["expressions"][0]["value"]
     except (KeyError, IndexError, TypeError) as exc:
-        raise SubmissionAPIError("OPA validation output did not include a validation result.") from exc
+        raise SubmissionAPIError(
+            "OPA validation output did not include a validation result."
+        ) from exc
 
 
 def get_overrides(config_file=None, overridden_rules_file_path=None):
@@ -1332,8 +1500,15 @@ def get_overridden_rule_ids(config_file=None):
 def get_text_overrides(overridden_rules_file_path=None):
     if not overridden_rules_file_path:
         return set(), set()
-    override_values = Path(overridden_rules_file_path).expanduser().read_text(encoding="utf-8").split()
-    overridden_rule_ids = {value for value in override_values if value.startswith("rule_")}
+    override_values = (
+        Path(overridden_rules_file_path)
+        .expanduser()
+        .read_text(encoding="utf-8")
+        .split()
+    )
+    overridden_rule_ids = {
+        value for value in override_values if value.startswith("rule_")
+    }
     overridden_files = {
         value
         for value in override_values
@@ -1342,19 +1517,32 @@ def get_text_overrides(overridden_rules_file_path=None):
     return overridden_rule_ids, overridden_files
 
 
-def split_validation_errors(validation_result, overridden_rule_ids=None, overridden_files=None):
+def split_validation_errors(
+    validation_result, overridden_rule_ids=None, overridden_files=None
+):
     overridden_rule_ids = overridden_rule_ids or set()
     overridden_files = overridden_files or set()
-    violations = validation_result.get("violations", []) if isinstance(validation_result, dict) else []
+    violations = (
+        validation_result.get("violations", [])
+        if isinstance(validation_result, dict)
+        else []
+    )
     errors = []
     overrides = []
     for violation in violations:
         if not is_error_violation(violation):
             continue
         if violation.get("identifier") in overridden_rule_ids:
-            overrides.append(mark_overridden(violation, "rule id is in the exclude list"))
-        elif violation.get("sourceFile") in overridden_files or violation.get("source_file") in overridden_files:
-            overrides.append(mark_overridden(violation, "file name is in the exclude list"))
+            overrides.append(
+                mark_overridden(violation, "rule id is in the exclude list")
+            )
+        elif (
+            violation.get("sourceFile") in overridden_files
+            or violation.get("source_file") in overridden_files
+        ):
+            overrides.append(
+                mark_overridden(violation, "file name is in the exclude list")
+            )
         else:
             errors.append(violation)
     return errors, overrides
@@ -1372,8 +1560,12 @@ def mark_overridden(violation, comment):
     return output
 
 
-def save_local_validation_report(study_id, report, validation_file_path=None, default_directory=None):
-    default_directory = default_directory or DEFAULT_LOCAL_SUBMISSION_CACHE_PATH / study_id
+def save_local_validation_report(
+    study_id, report, validation_file_path=None, default_directory=None
+):
+    default_directory = (
+        default_directory or DEFAULT_LOCAL_SUBMISSION_CACHE_PATH / study_id
+    )
     output_path = resolve_json_output_path(
         validation_file_path,
         default_directory,

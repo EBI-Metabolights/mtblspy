@@ -11,8 +11,8 @@ from mtblspy.commands.submissions.local_validation import (
     get_text_overrides,
     load_local_validation_input,
     normalize_validation_wasm_file,
-    prepare_validation_wasm_artifact,
     parse_opa_validation_output,
+    prepare_validation_wasm_artifact,
     run_wasm_validation,
     split_validation_errors,
 )
@@ -76,7 +76,9 @@ def test_split_validation_errors_filters_non_errors_and_overrides():
 
 def test_text_overrides_include_rule_ids_and_metadata_files(tmp_path):
     overrides_file = tmp_path / "overrides.txt"
-    overrides_file.write_text("rule_i_100_001\na_MTBLS123.txt\nnotes.txt\n", encoding="utf-8")
+    overrides_file.write_text(
+        "rule_i_100_001\na_MTBLS123.txt\nnotes.txt\n", encoding="utf-8"
+    )
 
     rule_ids, files = get_text_overrides(overrides_file)
 
@@ -95,7 +97,9 @@ def test_normalize_validation_wasm_file_decompresses_gzip_cache(tmp_path):
     assert wasm_path.read_bytes() == wasm_bytes
 
 
-def test_prepare_validation_wasm_artifact_gzips_plain_opa_wasm_bundle(tmp_path, monkeypatch):
+def test_prepare_validation_wasm_artifact_gzips_plain_opa_wasm_bundle(
+    tmp_path, monkeypatch
+):
     monkeypatch.setattr(
         "mtblspy.commands.submissions.local_validation.DEFAULT_LOCAL_SUBMISSION_CACHE_PATH",
         tmp_path / "cache",
@@ -118,7 +122,9 @@ def test_prepare_validation_wasm_artifact_gzips_plain_opa_wasm_bundle(tmp_path, 
     assert artifact.path.read_bytes().startswith(b"\x1f\x8b")
 
 
-def test_run_wasm_validation_uses_opa_for_gzipped_opa_wasm_bundle(tmp_path, monkeypatch):
+def test_run_wasm_validation_uses_opa_for_gzipped_opa_wasm_bundle(
+    tmp_path, monkeypatch
+):
     input_path = tmp_path / "input.json"
     input_path.write_text("{}", encoding="utf-8")
     bundle_path = tmp_path / "mtbls-validation.wasm"
@@ -168,8 +174,13 @@ def test_run_wasm_validation_uses_opa_for_gzipped_opa_wasm_bundle(tmp_path, monk
         post_calls.append((url, kwargs))
         return FakeResponse({"result": {"violations": []}})
 
-    monkeypatch.setattr("mtblspy.commands.submissions.local_validation.get_free_local_port", lambda: 8182)
-    monkeypatch.setattr("mtblspy.commands.submissions.local_validation.subprocess.Popen", fake_popen)
+    monkeypatch.setattr(
+        "mtblspy.commands.submissions.local_validation.get_free_local_port",
+        lambda: 8182,
+    )
+    monkeypatch.setattr(
+        "mtblspy.commands.submissions.local_validation.subprocess.Popen", fake_popen
+    )
     monkeypatch.setattr(
         "mtblspy.commands.submissions.local_validation.requests",
         SimpleNamespace(
@@ -179,25 +190,54 @@ def test_run_wasm_validation_uses_opa_for_gzipped_opa_wasm_bundle(tmp_path, monk
         ),
     )
 
-    result = run_wasm_validation(input_path, validation_wasm_path=bundle_path, opa_executable_path="opa-with-wasm")
+    result = run_wasm_validation(
+        input_path,
+        validation_wasm_path=bundle_path,
+        opa_executable_path="opa-with-wasm",
+    )
 
     assert result == {"violations": []}
-    assert popen_calls[0][:5] == ["opa-with-wasm", "run", "--server", "--addr", "127.0.0.1:8182"]
-    assert post_calls[0][0] == "http://127.0.0.1:8182/v1/data/metabolights/validation/v2/report/complete_report"
+    assert popen_calls[0][:5] == [
+        "opa-with-wasm",
+        "run",
+        "--server",
+        "--addr",
+        "127.0.0.1:8182",
+    ]
+    assert (
+        post_calls[0][0]
+        == "http://127.0.0.1:8182/v1/data/metabolights/validation/v2/report/complete_report"
+    )
     assert post_calls[0][1]["json"] == {"input": {}}
 
 
 def test_split_validation_errors_filters_file_overrides():
     validation_result = {
         "violations": [
-            {"type": "ERROR", "identifier": "rule-error", "sourceFile": "a_MTBLS123.txt"},
-            {"type": "ERROR", "identifier": "rule-other", "sourceFile": "i_Investigation.txt"},
+            {
+                "type": "ERROR",
+                "identifier": "rule-error",
+                "sourceFile": "a_MTBLS123.txt",
+            },
+            {
+                "type": "ERROR",
+                "identifier": "rule-other",
+                "sourceFile": "i_Investigation.txt",
+            },
         ]
     }
 
-    errors, overrides = split_validation_errors(validation_result, overridden_files={"a_MTBLS123.txt"})
+    errors, overrides = split_validation_errors(
+        validation_result, overridden_files={"a_MTBLS123.txt"}
+    )
 
-    assert errors == [{"type": "ERROR", "identifier": "rule-other", "sourceFile": "i_Investigation.txt"}]
+    assert errors == [
+        {
+            "type": "ERROR",
+            "identifier": "rule-other",
+            "sourceFile": "i_Investigation.txt",
+        }
+    ]
     assert overrides == [
         {
             "type": "WARNING",
@@ -268,21 +308,46 @@ def test_load_local_validation_input_parses_isatab_without_metabolights_utils(tm
     validation_input = load_local_validation_input("MTBLS123", tmp_path, "FILES")
 
     assert validation_input["investigation"]["studies"][0]["title"] == "Test study"
-    assert validation_input["investigation"]["studies"][0]["fileName"] == "s_MTBLS123.txt"
-    assert validation_input["investigation"]["studies"][0]["sampleTemplate"] == "minimum"
-    assert len(validation_input["investigation"]["studies"][0]["studyDesignDescriptors"]["designTypes"]) == 3
     assert (
-        validation_input["investigation"]["studies"][0]["studyPublications"]["publications"][0]["title"]
+        validation_input["investigation"]["studies"][0]["fileName"] == "s_MTBLS123.txt"
+    )
+    assert (
+        validation_input["investigation"]["studies"][0]["sampleTemplate"] == "minimum"
+    )
+    assert (
+        len(
+            validation_input["investigation"]["studies"][0]["studyDesignDescriptors"][
+                "designTypes"
+            ]
+        )
+        == 3
+    )
+    assert (
+        validation_input["investigation"]["studies"][0]["studyPublications"][
+            "publications"
+        ][0]["title"]
         == "Example publication"
     )
     assert (
-        validation_input["investigation"]["studies"][0]["studyContacts"]["people"][0]["affiliationRorId"]
+        validation_input["investigation"]["studies"][0]["studyContacts"]["people"][0][
+            "affiliationRorId"
+        ]
         == "https://ror.org/12345"
     )
-    assert validation_input["investigation"]["studies"][0]["studyAssays"]["assays"][0]["fileName"] == "a_MTBLS123.txt"
+    assert (
+        validation_input["investigation"]["studies"][0]["studyAssays"]["assays"][0][
+            "fileName"
+        ]
+        == "a_MTBLS123.txt"
+    )
     assert validation_input["samples"]["s_MTBLS123.txt"]["sampleNames"] == ["sample-1"]
-    assert validation_input["assays"]["a_MTBLS123.txt"]["referencedRawFiles"] == ["FILES/raw.raw"]
-    assert validation_input["assays"]["a_MTBLS123.txt"]["assayTechnique"]["mainTechnique"] == "MS"
+    assert validation_input["assays"]["a_MTBLS123.txt"]["referencedRawFiles"] == [
+        "FILES/raw.raw"
+    ]
+    assert (
+        validation_input["assays"]["a_MTBLS123.txt"]["assayTechnique"]["mainTechnique"]
+        == "MS"
+    )
     assert validation_input["referencedAssignmentFiles"] == ["m_MTBLS123.tsv"]
     assert validation_input["parserMessages"] == {
         "i_Investigation.txt": [],
@@ -290,7 +355,10 @@ def test_load_local_validation_input_parses_isatab_without_metabolights_utils(tm
         "a_MTBLS123.txt": [],
         "m_MTBLS123.tsv": [],
     }
-    assert validation_input["samples"]["s_MTBLS123.txt"]["table"]["columns"] == ["Source Name", "Sample Name"]
+    assert validation_input["samples"]["s_MTBLS123.txt"]["table"]["columns"] == [
+        "Source Name",
+        "Sample Name",
+    ]
     assert validation_input["samples"]["s_MTBLS123.txt"]["table"]["data"] == {
         "Source Name": ["source-1"],
         "Sample Name": ["sample-1"],
@@ -298,14 +366,34 @@ def test_load_local_validation_input_parses_isatab_without_metabolights_utils(tm
     sample_headers = validation_input["samples"]["s_MTBLS123.txt"]["table"]["headers"]
     assert sample_headers[0]["columnCategory"] == "Basic"
     assert sample_headers[1]["columnCategory"] == "Basic"
-    assert validation_input["assays"]["a_MTBLS123.txt"]["table"]["headers"][1]["columnPrefix"] == "Parameter Value"
+    assert (
+        validation_input["assays"]["a_MTBLS123.txt"]["table"]["headers"][1][
+            "columnPrefix"
+        ]
+        == "Parameter Value"
+    )
     assay_headers = validation_input["assays"]["a_MTBLS123.txt"]["table"]["headers"]
     assert assay_headers[1]["columnStructure"] == "ONTOLOGY_COLUMN"
-    assert assay_headers[1]["additionalColumns"] == ["Term Source REF", "Term Accession Number"]
+    assert assay_headers[1]["additionalColumns"] == [
+        "Term Source REF",
+        "Term Accession Number",
+    ]
     assert assay_headers[2]["columnStructure"] == "LINKED_COLUMN"
     assert "numberOfSampleRows" not in validation_input["samples"]["s_MTBLS123.txt"]
-    assert validation_input["metaboliteAssignments"]["m_MTBLS123.tsv"]["identifiedMetaboliteNames"] == []
-    assert validation_input["metaboliteAssignments"]["m_MTBLS123.tsv"]["numberOfRows"] == 1
-    assert validation_input["metaboliteAssignments"]["m_MTBLS123.tsv"]["numberOfAssignedRows"] == 0
+    assert (
+        validation_input["metaboliteAssignments"]["m_MTBLS123.tsv"][
+            "identifiedMetaboliteNames"
+        ]
+        == []
+    )
+    assert (
+        validation_input["metaboliteAssignments"]["m_MTBLS123.tsv"]["numberOfRows"] == 1
+    )
+    assert (
+        validation_input["metaboliteAssignments"]["m_MTBLS123.tsv"][
+            "numberOfAssignedRows"
+        ]
+        == 0
+    )
     assert "FILES/raw.raw" not in validation_input["studyFolderMetadata"]["files"]
     assert validation_input["hasInvestigationData"] is True

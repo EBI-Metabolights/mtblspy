@@ -7,7 +7,12 @@ from mtblspy.config import DEFAULT_BASE_URL, clear_session
 
 
 @click.command(name="logout")
-@click.option("--base-url", default=DEFAULT_BASE_URL, show_default=True, help="MetaboLights REST API base URL.")
+@click.option(
+    "--base-url",
+    default=DEFAULT_BASE_URL,
+    show_default=True,
+    help="MetaboLights REST API base URL.",
+)
 def logout(base_url):
     """Clear stored MetaboLights authentication credentials."""
     try:
@@ -17,7 +22,9 @@ def logout(base_url):
             client.submission_api_base_url,
             credential_base_url=client.credential_base_url,
         )
-        click.echo("Logged out. Stored MetaboLights tokens and user cleared from system.")
+        click.echo(
+            "Logged out. Stored MetaboLights tokens and user cleared from system."
+        )
 
         active_env_vars = [
             name

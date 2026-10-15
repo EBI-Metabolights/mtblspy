@@ -2,7 +2,11 @@ import json
 
 import click
 
-from mtblspy.commands.submissions.cli_utils import create_submission_client, get_submission_client, jwt_token_option
+from mtblspy.commands.submissions.cli_utils import (
+    create_submission_client,
+    get_submission_client,
+    jwt_token_option,
+)
 from mtblspy.commands.submissions.exceptions import SubmissionAPIError, SubmissionError
 
 
@@ -13,7 +17,9 @@ def delete_submission():
 
 @delete_submission.command(name="metadata")
 @click.argument("study_id")
-@click.option("--base-url", help="MetaboLights REST API base URL used to select credentials.")
+@click.option(
+    "--base-url", help="MetaboLights REST API base URL used to select credentials."
+)
 @click.option(
     "--files",
     "selected_files",
@@ -25,7 +31,12 @@ def delete_submission():
 def delete_metadata(ctx, study_id, base_url, selected_files, jwt_token):
     """Delete ISA-Tab metadata files from a study."""
     try:
-        client = get_submission_client(ctx, base_url=base_url, jwt_token=jwt_token, factory=create_submission_client)
+        client = get_submission_client(
+            ctx,
+            base_url=base_url,
+            jwt_token=jwt_token,
+            factory=create_submission_client,
+        )
         result = client.delete_metadata_files(
             study_id,
             selected_files=selected_files,
@@ -64,7 +75,10 @@ def build_delete_message(result):
     file_count = len(result.deleted_files)
     parts = [f"Deleted {file_count} metadata file(s) for {result.study_id}."]
     if result.missing_files:
-        parts.append(f"Missing {len(result.missing_files)} requested file(s): " + ", ".join(result.missing_files))
+        parts.append(
+            f"Missing {len(result.missing_files)} requested file(s): "
+            + ", ".join(result.missing_files)
+        )
     if result.errors:
         parts.append(f"Encountered {len(result.errors)} error(s).")
     return " ".join(parts)

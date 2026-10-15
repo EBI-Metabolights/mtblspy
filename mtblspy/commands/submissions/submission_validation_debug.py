@@ -1,7 +1,12 @@
 import click
 
 from mtblspy.commands.output import resolve_json_output_path, write_json_file
-from mtblspy.commands.submissions.cli_utils import echo_validation_errors, create_submission_client, get_submission_client, jwt_token_option
+from mtblspy.commands.submissions.cli_utils import (
+    create_submission_client,
+    echo_validation_errors,
+    get_submission_client,
+    jwt_token_option,
+)
 from mtblspy.commands.submissions.client import (
     DEFAULT_LOCAL_SUBMISSION_CACHE_PATH,
     VALIDATION_MAX_POLLS,
@@ -59,7 +64,9 @@ from mtblspy.commands.submissions.local_validation import (
     type=click.Path(dir_okay=False),
     help="Path to save the raw remote validation root-cause report.",
 )
-@click.option("--base-url", help="MetaboLights REST API base URL used to select credentials.")
+@click.option(
+    "--base-url", help="MetaboLights REST API base URL used to select credentials."
+)
 @click.option(
     "--local-validation-file-path",
     type=click.Path(dir_okay=False),
@@ -88,15 +95,30 @@ from mtblspy.commands.submissions.local_validation import (
     default=False,
     help="Download the validation bundle even if --validation-bundle-path already exists.",
 )
-@click.option("--opa-executable-path", default="opa", show_default=True, help="OPA executable path.")
-@click.option("--max-polls", default=VALIDATION_MAX_POLLS, show_default=True, help="Maximum validation status checks.")
+@click.option(
+    "--opa-executable-path",
+    default="opa",
+    show_default=True,
+    help="OPA executable path.",
+)
+@click.option(
+    "--max-polls",
+    default=VALIDATION_MAX_POLLS,
+    show_default=True,
+    help="Maximum validation status checks.",
+)
 @click.option(
     "--poll-interval",
     default=VALIDATION_POLL_INTERVAL_SECONDS,
     show_default=True,
     help="Seconds between validation status checks.",
 )
-@click.option("--timeout", default=LOCAL_VALIDATION_TIMEOUT_SECONDS, show_default=True, help="Local OPA timeout in seconds.")
+@click.option(
+    "--timeout",
+    default=LOCAL_VALIDATION_TIMEOUT_SECONDS,
+    show_default=True,
+    help="Local OPA timeout in seconds.",
+)
 @jwt_token_option
 @click.pass_context
 def validation_debug(
@@ -128,9 +150,16 @@ def validation_debug(
             cache_directory,
             f"{study_id}_validation_debug.json",
         )
-        remote_report_path = remote_validation_file_path or str(cache_directory / f"{study_id}_remote_validation_report.json")
+        remote_report_path = remote_validation_file_path or str(
+            cache_directory / f"{study_id}_remote_validation_report.json"
+        )
 
-        client = get_submission_client(ctx, base_url=base_url, jwt_token=jwt_token, factory=create_submission_client)
+        client = get_submission_client(
+            ctx,
+            base_url=base_url,
+            jwt_token=jwt_token,
+            factory=create_submission_client,
+        )
         click.echo(f"Creating remote validation root-cause report for {study_id}...")
         remote_result = client.find_validation_root_causes(
             study_id,
@@ -172,26 +201,40 @@ def validation_debug(
 
     validation_result = remote_result.validation_result
     if validation_result.errors:
-        click.echo(f"Remote validation completed with {len(validation_result.errors)} error(s).")
+        click.echo(
+            f"Remote validation completed with {len(validation_result.errors)} error(s)."
+        )
         echo_validation_errors(validation_result.errors)
     else:
-        click.echo("Remote validation completed successfully. No validation errors found.")
+        click.echo(
+            "Remote validation completed successfully. No validation errors found."
+        )
 
     if local_result:
         if local_result.errors:
-            click.echo(f"Local validation completed with {len(local_result.errors)} error(s).")
+            click.echo(
+                f"Local validation completed with {len(local_result.errors)} error(s)."
+            )
             echo_validation_errors(local_result.errors)
         else:
-            click.echo("Local validation completed successfully. No validation errors found.")
-        click.echo(f"Local validation input is saved as {local_result.validation_input_path}")
+            click.echo(
+                "Local validation completed successfully. No validation errors found."
+            )
+        click.echo(
+            f"Local validation input is saved as {local_result.validation_input_path}"
+        )
         click.echo(f"Local validation report is saved as {local_result.report_path}")
 
     click.echo(f"ISA JSON is saved as {remote_result.isa_json_path}")
-    click.echo(f"Remote validation root-cause report is saved as {validation_result.report_path}")
+    click.echo(
+        f"Remote validation root-cause report is saved as {validation_result.report_path}"
+    )
     click.echo(f"Combined validation debug report is saved as {debug_report_path}")
 
 
-def build_validation_debug_report(study_id, remote_result, local_result=None, local_context=None):
+def build_validation_debug_report(
+    study_id, remote_result, local_result=None, local_context=None
+):
     remote_errors = remote_result.validation_result.errors
     local_errors = local_result.errors if local_result else []
     comparison = compare_validation_errors(remote_errors, local_errors)
@@ -208,7 +251,9 @@ def build_validation_debug_report(study_id, remote_result, local_result=None, lo
             "reportPath": str(remote_result.validation_result.report_path),
             "isaJsonPath": str(remote_result.isa_json_path),
             "errors": remote_errors,
-            "rootCauses": get_validation_root_causes(remote_errors) if remote_errors else [],
+            "rootCauses": get_validation_root_causes(remote_errors)
+            if remote_errors
+            else [],
         },
         "comparison": comparison,
         "diagnosis": build_diagnosis(comparison, bool(local_result), local_context),
@@ -219,7 +264,9 @@ def build_validation_debug_report(study_id, remote_result, local_result=None, lo
             "validationInputPath": str(local_result.validation_input_path),
             "context": local_context,
             "errors": local_errors,
-            "rootCauses": get_validation_root_causes(local_errors) if local_errors else [],
+            "rootCauses": get_validation_root_causes(local_errors)
+            if local_errors
+            else [],
         }
     return report
 
@@ -231,8 +278,13 @@ def compare_validation_errors(remote_errors, local_errors):
     remote_only_keys = sorted(set(remote_by_key) - set(local_by_key))
     local_only_keys = sorted(set(local_by_key) - set(remote_by_key))
     return {
-        "sharedErrors": [comparison_item(remote_by_key[key], local_by_key[key]) for key in shared_keys],
-        "remoteOnlyErrors": [debug_error(remote_by_key[key]) for key in remote_only_keys],
+        "sharedErrors": [
+            comparison_item(remote_by_key[key], local_by_key[key])
+            for key in shared_keys
+        ],
+        "remoteOnlyErrors": [
+            debug_error(remote_by_key[key]) for key in remote_only_keys
+        ],
         "localOnlyErrors": [debug_error(local_by_key[key]) for key in local_only_keys],
     }
 
@@ -240,7 +292,10 @@ def compare_validation_errors(remote_errors, local_errors):
 def validation_error_key(error):
     return (
         get_validation_error_rule(error) or "",
-        error.get("sourceFile") or error.get("source_file") or error.get("metadata_file") or "",
+        error.get("sourceFile")
+        or error.get("source_file")
+        or error.get("metadata_file")
+        or "",
         get_validation_error_field(error) or "",
         get_validation_error_message(error) or "",
     )
@@ -248,10 +303,13 @@ def validation_error_key(error):
 
 def comparison_item(remote_error, local_error):
     return {
-        "rule": get_validation_error_rule(remote_error) or get_validation_error_rule(local_error),
+        "rule": get_validation_error_rule(remote_error)
+        or get_validation_error_rule(local_error),
         "sourceFile": remote_error.get("sourceFile") or local_error.get("sourceFile"),
-        "field": get_validation_error_field(remote_error) or get_validation_error_field(local_error),
-        "message": get_validation_error_message(remote_error) or get_validation_error_message(local_error),
+        "field": get_validation_error_field(remote_error)
+        or get_validation_error_field(local_error),
+        "message": get_validation_error_message(remote_error)
+        or get_validation_error_message(local_error),
         "remote": debug_error(remote_error),
         "local": debug_error(local_error),
     }
@@ -261,7 +319,9 @@ def debug_error(error):
     return {
         "rule": get_validation_error_rule(error),
         "section": error.get("section"),
-        "sourceFile": error.get("sourceFile") or error.get("source_file") or error.get("metadata_file"),
+        "sourceFile": error.get("sourceFile")
+        or error.get("source_file")
+        or error.get("metadata_file"),
         "field": get_validation_error_field(error),
         "message": get_validation_error_message(error),
         "value": get_validation_error_value(error),

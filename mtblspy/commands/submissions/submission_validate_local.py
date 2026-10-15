@@ -39,7 +39,12 @@ from mtblspy.commands.submissions.local_validation import (
     default=False,
     help="Download the validation bundle even if --validation-bundle-path already exists.",
 )
-@click.option("--opa-executable-path", default="opa", show_default=True, help="OPA executable path.")
+@click.option(
+    "--opa-executable-path",
+    default="opa",
+    show_default=True,
+    help="OPA executable path.",
+)
 @click.option(
     "--validation-input-path",
     type=click.Path(dir_okay=False),
@@ -64,7 +69,12 @@ from mtblspy.commands.submissions.local_validation import (
     type=click.Path(exists=True, dir_okay=False),
     help="Text file with validation rule identifiers or metadata filenames to ignore.",
 )
-@click.option("--timeout", default=LOCAL_VALIDATION_TIMEOUT_SECONDS, show_default=True, help="OPA validation timeout in seconds.")
+@click.option(
+    "--timeout",
+    default=LOCAL_VALIDATION_TIMEOUT_SECONDS,
+    show_default=True,
+    help="OPA validation timeout in seconds.",
+)
 def validate_local_submission(
     study_id,
     metadata_path,
@@ -103,7 +113,9 @@ def validate_local_submission(
         click.echo(f"Local validation completed with {len(result.errors)} error(s).")
         echo_validation_errors(result.errors)
     else:
-        click.echo("Local validation completed successfully. No validation errors found.")
+        click.echo(
+            "Local validation completed successfully. No validation errors found."
+        )
 
     click.echo(f"Local validation input is saved as {result.validation_input_path}")
     click.echo(f"Local validation report is saved as {result.report_path}")
