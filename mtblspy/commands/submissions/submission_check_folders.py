@@ -8,8 +8,8 @@ import click
 from mtblspy.commands.output import save_json_output
 from mtblspy.commands.submissions.client import (
     DEFAULT_LOCAL_SUBMISSION_CACHE_PATH,
-    DEFAULT_LOCAL_SUBMISSION_DATA_PATH,
     is_metadata_filename,
+    metadata_filename_study_id_error,
     normalize_study_id,
 )
 from mtblspy.commands.submissions.exceptions import SubmissionAPIError
@@ -19,7 +19,6 @@ from mtblspy.commands.submissions.local_validation import (
     RAW_FILE_COLUMNS,
     get_column_values,
     load_local_validation_input,
-    resolve_metadata_path,
     table_rows,
 )
 
@@ -31,18 +30,17 @@ RAW_FOLDER_SUFFIXES = (".d", ".raw")
     name="check-folders",
     short_help="Check local metadata and data folders before submission.",
 )
-@click.argument("study_id")
 @click.option(
-    "--default-submission-data-path",
-    default=str(DEFAULT_LOCAL_SUBMISSION_DATA_PATH),
-    show_default=True,
-    help="Parent folder for default metadata lookup.",
+    "--study-id",
+    help="Optionally validate metadata filenames against this study accession.",
 )
 @click.option(
     "-p",
     "--metadata-files-path",
     "--metadata-path",
-    help="Local ISA-Tab metadata directory. Defaults to <default-submission-data-path>/<study-id>.",
+    default=".",
+    show_default=True,
+    help="Local ISA-Tab metadata directory.",
 )
 @click.option(
     "--data-files-path",
@@ -55,17 +53,14 @@ RAW_FOLDER_SUFFIXES = (".d", ".raw")
     type=click.Path(dir_okay=False),
     help="Save the folder check report as JSON. Defaults to the local MetaboLights cache folder.",
 )
-def check_folders(
-    study_id, default_submission_data_path, metadata_files_path, data_files_path, output
-):
+def check_folders(study_id, metadata_files_path, data_files_path, output):
     """Check local study folders against MetaboLights submission prerequisites."""
     result = check_submission_folders(
-        study_id,
+        study_id=study_id,
         metadata_files_path=metadata_files_path,
         data_files_path=data_files_path,
-        default_submission_data_path=default_submission_data_path,
     )
-    output_path = save_check_folders_output(result, output, result["study_id"])
+    output_path = save_check_folders_output(result, output)
     click.echo(json.dumps(result, indent=2))
     click.echo(f"Folder check report JSON saved to {output_path}")
     if result["status"] == "failed":
@@ -73,19 +68,16 @@ def check_folders(
 
 
 def check_submission_folders(
-    study_id,
+    study_id=None,
     metadata_files_path=None,
     data_files_path=None,
-    default_submission_data_path=None,
 ):
-    study_id = normalize_study_id(study_id)
-    metadata_path = resolve_metadata_path(
-        study_id, metadata_files_path, default_submission_data_path
-    )
+    study_id = normalize_study_id(study_id) if study_id else None
+    metadata_path = Path(metadata_files_path or ".").expanduser().resolve()
     data_path = resolve_data_files_path(data_files_path, metadata_path)
     result = {
-        "study_id": study_id,
         "status": "success",
+        "study_id": study_id,
         "metadata_files_path": str(metadata_path),
         "data_files_path": str(data_path),
         "summary": {
@@ -101,12 +93,12 @@ def check_submission_folders(
     }
 
     validation_input = None
-    check_metadata_folder(metadata_path, result)
+    check_metadata_folder(metadata_path, result, study_id=study_id)
     check_data_folder(data_path, result)
     if metadata_path.exists() and metadata_path.is_dir():
         try:
             validation_input = load_local_validation_input(
-                study_id, metadata_path, data_path
+                "LOCAL", metadata_path, data_path
             )
         except SubmissionAPIError as exc:
             add_error(result, "metadata_parse_failed", metadata_path, str(exc))
@@ -135,16 +127,16 @@ def resolve_data_files_path(data_files_path, metadata_path):
     return (metadata_path / "FILES").resolve()
 
 
-def save_check_folders_output(payload, output, study_id):
+def save_check_folders_output(payload, output):
     return save_json_output(
         payload,
         output,
-        DEFAULT_LOCAL_SUBMISSION_CACHE_PATH / study_id,
-        f"{study_id}_folder_check_report.json",
+        DEFAULT_LOCAL_SUBMISSION_CACHE_PATH,
+        "folder_check_report.json",
     )
 
 
-def check_metadata_folder(metadata_path, result):
+def check_metadata_folder(metadata_path, result, study_id=None):
     if not metadata_path.exists() or not metadata_path.is_dir():
         add_error(
             result,
@@ -160,6 +152,16 @@ def check_metadata_folder(metadata_path, result):
         if path.is_file() and is_metadata_filename(path.name)
     ]
     result["summary"]["metadata_files"] = len(metadata_files)
+    if study_id:
+        for path in metadata_files:
+            message = metadata_filename_study_id_error(path.name, study_id)
+            if message:
+                add_error(
+                    result,
+                    "metadata_filename_study_id_mismatch",
+                    path,
+                    message,
+                )
     all_files = [path for path in metadata_path.iterdir() if path.is_file()]
     for path in all_files:
         check_allowed_name(path.name, path, result)

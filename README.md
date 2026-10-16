@@ -132,7 +132,7 @@ Use this path when you already have local ISA-Tab metadata and study data files.
 ```bash
 mtbls auth login
 mtbls submission create --input-file ./study_input.json -o create_response.json
-mtbls submission check-folders MTBLSxxx --metadata-files-path ./MTBLSxxx --data-files-path ./MTBLSxxx/FILES -o folder_check_report.json
+mtbls submission check-folders --study-id MTBLSxxx --metadata-files-path ./MTBLSxxx --data-files-path ./MTBLSxxx/FILES -o folder_check_report.json
 mtbls submission metadata-upload MTBLSxxx -p ./MTBLSxxx -o metadata_upload_response.json
 mtbls submission data-upload MTBLSxxx --data-files-root-path ./MTBLSxxx/FILES -o data_upload_response.json
 mtbls submission validate MTBLSxxx --remote-validation -o validation_report.json
@@ -354,15 +354,16 @@ mtbls submission delete metadata MTBLSxxx --files i_Investigation.txt,s_MTBLSxxx
 Check local ISA-Tab metadata and data folders before upload. This command checks study submission prerequisites, metadata filename formats, referenced metadata/data files, and local data file/folder standards before you upload files. Use `mtbls submission validate` for ISA-Tab content completeness and rule validation.
 
 ```bash
-mtbls submission check-folders MTBLSxxx \
+mtbls submission check-folders \
+  --study-id MTBLSxxx \
   --metadata-files-path ./MTBLSxxx \
   --data-files-path ./MTBLSxxx/FILES \
   -o folder_check_report.json
 ```
 
-When paths are not specified, metadata defaults to `~/metabolights_data/submission/data/<study_id>` and data defaults to `<metadata-files-path>/FILES`.
+When paths are not specified, metadata defaults to the current directory and data defaults to `<metadata-files-path>/FILES`.
 
-The report includes errors and warnings for metadata filename issues, missing required local metadata files, metadata/data file references, accepted data folder structure, compressed raw data folder requirements, and related file/folder standards. It prints a JSON report, saves it to `~/metabolights_data/submission/cache/<study_id>/<study_id>_folder_check_report.json` by default, lets you override the path with `-o` or `--output`, and exits with status code `1` when errors are found.
+The report includes errors and warnings for metadata filename issues, missing required local metadata files, metadata/data file references, accepted data folder structure, compressed raw data folder requirements, and related file/folder standards. It prints a JSON report, saves it as `~/metabolights_data/submission/cache/folder_check_report.json` by default, lets you override the path with `-o` or `--output`, and exits with status code `1` when errors are found. A study accession is not required; when `--study-id` is supplied, the command also checks sample, assay, and MAF filenames against that accession.
 
 Example submission folders are available under `examples/submission`. See the submission workflow guide for step-by-step instructions to copy an example, replace `MTBLSXXX` with your study ID in folder names, filenames, and metadata content, and run the checks.
 
@@ -784,7 +785,7 @@ mtbls --help
 | `mtbls submission create` | Create a provisional study from a JSON input file |
 | `mtbls submission ftp-credentials STUDY_ID` | Get private FTP upload credentials |
 | `mtbls submission clean-ftp-temp-files STUDY_ID` | Remove temporary files left by interrupted data uploads |
-| `mtbls submission check-folders STUDY_ID --metadata-files-path PATH --data-files-path PATH -o REPORT.json` | Check local metadata and data folder prerequisites |
+| `mtbls submission check-folders [--study-id STUDY_ID] --metadata-files-path PATH --data-files-path PATH -o REPORT.json` | Check local metadata and data folder prerequisites |
 | `mtbls submission data-upload STUDY_ID --data-files-root-path PATH` | Upload data files to the private FTP area |
 | `mtbls submission metadata-upload STUDY_ID` | Upload ISA-Tab metadata files |
 | `mtbls submission delete metadata STUDY_ID --files FILES` | Delete selected ISA-Tab metadata files only when they are unreferenced |
@@ -826,7 +827,7 @@ Use `-h` or `--help` with any command to see the same options in the terminal.
 | `mtbls submission create` | None | `--input-file`, `--input-format`, `-o`, `--output` |
 | `mtbls submission ftp-credentials` | `STUDY_ID` | `-o`, `--output` |
 | `mtbls submission clean-ftp-temp-files` | `STUDY_ID` | `--mtbls-submission-endpoint`, `-o`, `--output` |
-| `mtbls submission check-folders` | `STUDY_ID` | `--default-submission-data-path`, `-p`, `--metadata-files-path`, `--metadata-path`, `--data-files-path`, `--data-files-root-path`, `-o`, `--output` |
+| `mtbls submission check-folders` | None | `--study-id`, `-p`, `--metadata-files-path`, `--metadata-path`, `--data-files-path`, `--data-files-root-path`, `-o`, `--output` |
 | `mtbls submission metadata-upload` | `STUDY_ID` | `--default-submission-data-path`, `-p`, `--metadata-files-path`, `--metadata-path`, `--mtbls-submission-endpoint`, `--selected-files`, `-o`, `--output` |
 | `mtbls submission delete metadata STUDY_ID` | `STUDY_ID` | `--files`, `--base-url` |
 | `mtbls submission data-upload` | `STUDY_ID` | `--data-files-root-path`, `--selected-files`, `--skip-uploaded-files`, `--skip-empty-folders`, `--mtbls-submission-endpoint`, `-o`, `--output`, `--progress`, `--no-progress` |
