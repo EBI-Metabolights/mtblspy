@@ -1450,7 +1450,8 @@ def test_submission_check_folders_reports_success_for_valid_local_layout(
         [
             "submission",
             "check-folders",
-            "MTBLSXXX",
+            "--study-id",
+            "mtblsxxx",
             "--metadata-files-path",
             str(study_path),
             "--data-files-path",
@@ -1463,6 +1464,7 @@ def test_submission_check_folders_reports_success_for_valid_local_layout(
     assert result.exit_code == 0
     payload = load_stdout_json_prefix(result.output)
     assert payload["status"] == "success"
+    assert payload["study_id"] == "MTBLSXXX"
     assert payload["errors"] == []
     assert payload["summary"]["metadata_files"] == 4
     assert payload["summary"]["referenced_raw_files"] == 2
@@ -1488,7 +1490,6 @@ def test_submission_check_folders_saves_report_to_default_cache_without_output(
         [
             "submission",
             "check-folders",
-            "MTBLSXXX",
             "--metadata-files-path",
             str(study_path),
             "--data-files-path",
@@ -1496,13 +1497,43 @@ def test_submission_check_folders_saves_report_to_default_cache_without_output(
         ],
     )
 
-    report_path = cache_path / "MTBLSXXX" / "MTBLSXXX_folder_check_report.json"
+    report_path = cache_path / "folder_check_report.json"
     assert result.exit_code == 0
     payload = load_stdout_json_prefix(result.output)
     assert json.loads(report_path.read_text(encoding="utf-8")) == payload
     assert result.output.rstrip().endswith(
         f"Folder check report JSON saved to {report_path}"
     )
+
+
+def test_submission_check_folders_optionally_validates_study_id_in_filenames(runner):
+    study_path = EXAMPLE_SUBMISSION_ROOT / "valid" / "MTBLSXXX"
+
+    result = runner.invoke(
+        cli,
+        [
+            "submission",
+            "check-folders",
+            "--study-id",
+            "MTBLS123",
+            "--metadata-files-path",
+            str(study_path),
+        ],
+    )
+
+    assert result.exit_code == 1
+    payload = load_stdout_json_prefix(result.output)
+    mismatches = [
+        error
+        for error in payload["errors"]
+        if error["code"] == "metadata_filename_study_id_mismatch"
+    ]
+    assert len(mismatches) == 3
+    assert {Path(error["path"]).name for error in mismatches} == {
+        "s_MTBLSXXX.txt",
+        "a_MTBLSXXX_lc-ms.txt",
+        "m_MTBLSXXX.tsv",
+    }
 
 
 def test_submission_check_folders_reports_folder_and_reference_errors(runner):
@@ -1513,7 +1544,6 @@ def test_submission_check_folders_reports_folder_and_reference_errors(runner):
         [
             "submission",
             "check-folders",
-            "MTBLSXXX",
             "--metadata-files-path",
             str(study_path),
             "--data-files-path",
@@ -1539,7 +1569,6 @@ def test_submission_check_folders_leaves_metadata_completeness_to_validate(runne
         [
             "submission",
             "check-folders",
-            "MTBLSXXX",
             "--metadata-files-path",
             str(study_path),
             "--data-files-path",

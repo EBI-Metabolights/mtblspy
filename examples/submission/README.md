@@ -5,7 +5,8 @@ These folders provide small ISA-Tab and data-file examples for trying the submis
 Use the valid example with:
 
 ```bash
-mtbls submission check-folders MTBLSXXX \
+mtbls submission check-folders \
+  --study-id MTBLSXXX \
   --metadata-files-path examples/submission/valid/MTBLSXXX \
   --data-files-path examples/submission/valid/MTBLSXXX/FILES \
   -o folder_check_report.json
