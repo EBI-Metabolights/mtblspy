@@ -94,6 +94,8 @@ The response contains a new accession such as `REQxxxxx`. Use your returned acce
 mtbls submission list
 ```
 
+As an additional confirmation, open the [MetaboLights test editor](https://wwwdev.ebi.ac.uk/metabolights/editor), sign in, and check that the newly created study and its accession appear in your study list. Open the study once to confirm that you can access it before continuing.
+
 For convenience, set a shell variable now:
 
 ```bash
@@ -180,7 +182,13 @@ mtbls submission data-upload "$STUDY_ID" \
 
 ## 8. Run remote validation
 
-Run validation on the uploaded server copy:
+Before validation, index the uploaded data files in the MetaboLights website:
+
+1. Open the [MetaboLights test editor](https://wwwdev.ebi.ac.uk/metabolights/editor) and select your study.
+2. Go to the data-files area and start the file-indexing action.
+3. Wait for indexing to finish and confirm that `data01.raw` is listed for the study.
+
+Indexing makes the uploaded FTP files available to the server-side validation workflow. After it completes, run validation on the uploaded server copy:
 
 ```bash
 mtbls submission validate "$STUDY_ID" \
