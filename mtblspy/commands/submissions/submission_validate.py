@@ -50,6 +50,12 @@ from mtblspy.commands.submissions.local_validation import (
     help="Run validation through the remote submission API instead of local validation.",
 )
 @click.option(
+    "--sync-data-files",
+    is_flag=True,
+    default=False,
+    help="Index private FTP data files before remote validation and wait for completion.",
+)
+@click.option(
     "--mtbls-validation-wasm-path",
     type=click.Path(dir_okay=False),
     help=(
@@ -153,6 +159,7 @@ def validate_submission(
     metadata_files_path,
     data_files_root_path,
     remote_validation,
+    sync_data_files,
     mtbls_validation_wasm_path,
     mtbls_validation_wasm_url,
     mtbls_validation_endpoint,
@@ -188,8 +195,13 @@ def validate_submission(
                 max_polls,
                 poll_interval,
                 jwt_token,
+                sync_data_files,
             )
         else:
+            if sync_data_files:
+                raise click.ClickException(
+                    "--sync-data-files can only be used with --remote-validation."
+                )
             if not data_files_root_path:
                 raise click.ClickException(
                     "--data-files-root-path is required unless --remote-validation is used."
@@ -215,6 +227,10 @@ def validate_submission(
         raise click.ClickException(str(exc)) from exc
 
     report = load_json_report(result.report_path)
+    if not isinstance(report, dict):
+        raise click.ClickException(
+            f"Validation report did not contain a JSON object: {result.report_path}"
+        )
     report.setdefault("accession", normalized_study_id)
     click.echo(json.dumps(report, indent=2))
     click.echo(f"Validation report JSON saved to {result.report_path}")
@@ -230,6 +246,7 @@ def run_remote_validation(
     max_polls,
     poll_interval,
     jwt_token,
+    sync_data_files,
 ):
     client = get_submission_client(
         ctx,
@@ -240,6 +257,14 @@ def run_remote_validation(
     validation_endpoint = normalize_endpoint(mtbls_validation_endpoint)
     if validation_endpoint:
         client.submission_api_base_url = validation_endpoint
+    if sync_data_files:
+        click.echo(f"Indexing private FTP data files for {study_id.upper().strip()}...")
+        client.sync_private_ftp_data_files(
+            study_id,
+            max_polls=max_polls,
+            poll_interval=poll_interval,
+        )
+        click.echo("Data-file indexing completed successfully.")
     return client.validate_study(
         study_id,
         validation_file_path=output,

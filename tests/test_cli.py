@@ -1323,6 +1323,92 @@ def test_submission_validate_remote_prints_json_report(
     )
 
 
+@patch("mtblspy.commands.submissions.submission_validate.create_submission_client")
+def test_submission_validate_can_sync_data_files_before_remote_validation(
+    mock_client_cls, runner, tmp_path
+):
+    report_path = tmp_path / "validation-report.json"
+    report_path.write_text(
+        '{"accession": "MTBLS123", "messages": {"violations": []}}\n',
+        encoding="utf-8",
+    )
+    validation_result = MagicMock(report_path=report_path, errors=[])
+    client = MagicMock()
+    client.validate_study.return_value = validation_result
+    mock_client_cls.return_value = client
+
+    result = runner.invoke(
+        cli,
+        [
+            "submission",
+            "validate",
+            "MTBLS123",
+            "--remote-validation",
+            "--sync-data-files",
+            "--validation-file-path",
+            str(report_path),
+        ],
+    )
+
+    assert result.exit_code == 0
+    client.sync_private_ftp_data_files.assert_called_once_with(
+        "MTBLS123", max_polls=120, poll_interval=5
+    )
+    client.validate_study.assert_called_once_with(
+        "MTBLS123",
+        validation_file_path=str(report_path),
+        max_polls=120,
+        poll_interval=5,
+    )
+    assert result.output.index("Data-file indexing completed successfully.") < (
+        result.output.index('"accession": "MTBLS123"')
+    )
+
+
+@patch("mtblspy.commands.submissions.submission_validate.create_submission_client")
+def test_submission_validate_reports_null_remote_report_without_traceback(
+    mock_client_cls, runner, tmp_path
+):
+    report_path = tmp_path / "validation-report.json"
+    report_path.write_text("null\n", encoding="utf-8")
+    client = MagicMock()
+    client.validate_study.return_value = MagicMock(report_path=report_path, errors=[])
+    mock_client_cls.return_value = client
+
+    result = runner.invoke(
+        cli,
+        [
+            "submission",
+            "validate",
+            "MTBLS123",
+            "--remote-validation",
+            "--validation-file-path",
+            str(report_path),
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "Validation report did not contain a JSON object" in result.output
+    assert "AttributeError" not in result.output
+
+
+def test_submission_validate_rejects_data_sync_for_local_validation(runner):
+    result = runner.invoke(
+        cli,
+        [
+            "submission",
+            "validate",
+            "MTBLS123",
+            "--sync-data-files",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert (
+        "--sync-data-files can only be used with --remote-validation" in result.output
+    )
+
+
 def test_submission_help_shows_validate_without_validate_local(runner):
     result = runner.invoke(cli, ["submission", "--help"])
 

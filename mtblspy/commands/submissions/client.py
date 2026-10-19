@@ -970,6 +970,44 @@ class SubmissionClient:
             errors = enrich_validation_errors_with_isa_json(errors, isa_json)
         return ValidationResult(report=report, errors=errors, report_path=report_path)
 
+    def sync_private_ftp_data_files(
+        self,
+        study_id,
+        max_polls=VALIDATION_MAX_POLLS,
+        poll_interval=VALIDATION_POLL_INTERVAL_SECONDS,
+    ):
+        """Index private FTP data files into the study's read-only folder."""
+        study_id = normalize_study_id(study_id)
+        sync_url = (
+            f"{self.rest_api_base_url.rstrip('/')}/studies/{study_id}"
+            "/study-folders/rsync-task"
+        )
+        headers = {
+            **self.get_auth_headers(),
+            "Dry-Run": "false",
+            "Sync-Type": "data",
+            "Source-Staging-Area": "private-ftp",
+            "Target-Staging-Area": "readonly-study",
+        }
+        response = requests.post(sync_url, headers=headers, timeout=30)
+        response.raise_for_status()
+        response_data = response.json()
+        raise_for_api_error(response_data)
+
+        task_id = get_task_id(response_data)
+        if not task_id:
+            raise SubmissionAPIError(
+                f"Data-file synchronisation for {study_id} did not return a task id."
+            )
+
+        return ensure_data_sync_task_succeeded(
+            study_id,
+            sync_url,
+            headers,
+            max_polls,
+            poll_interval,
+        )
+
     def find_validation_root_causes(
         self,
         study_id,
@@ -1039,7 +1077,8 @@ class SubmissionClient:
 
         initial_status = get_task_status(response_data)
         if (
-            is_task_successful(response_data) is not True
+            not has_validation_task_result(response_data)
+            or is_task_successful(response_data) is not True
             and "SUCCESS" not in initial_status.upper()
         ):
             task_headers = dict(headers)
@@ -2324,6 +2363,18 @@ def is_task_successful(response_data):
     )
 
 
+def has_validation_task_result(response_data):
+    if not isinstance(response_data, dict):
+        return False
+    content = response_data.get("content", response_data)
+    if not isinstance(content, dict):
+        return False
+    return any(
+        key in content and content[key] is not None
+        for key in ("taskResult", "task_result")
+    )
+
+
 def raise_for_api_error(response_data):
     if not isinstance(response_data, dict):
         return
@@ -2380,7 +2431,8 @@ def ensure_validation_task_succeeded(
 
         status = get_task_status(response_data)
         successful = is_task_successful(response_data)
-        if successful is True or "SUCCESS" in status.upper():
+        task_succeeded = successful is True or "SUCCESS" in status.upper()
+        if task_succeeded and has_validation_task_result(response_data):
             return response_data
         if successful is False or any(
             failure in status.upper() for failure in ("FAIL", "REVOKED")
@@ -2388,7 +2440,7 @@ def ensure_validation_task_succeeded(
             raise SubmissionAPIError(
                 f"Validation task for {study_id} failed. Last state: {format_task_state(response_data)}"
             )
-        if is_task_ready(response_data) and successful is not True:
+        if is_task_ready(response_data) and not task_succeeded:
             raise SubmissionAPIError(
                 f"Validation task for {study_id} did not finish successfully. Last state: {format_task_state(response_data)}"
             )
@@ -2396,6 +2448,33 @@ def ensure_validation_task_succeeded(
         time.sleep(poll_interval)
 
     message = f"Validation task for {study_id} did not complete in time."
+    if last_response_data:
+        message = f"{message} Last state: {format_task_state(last_response_data)}"
+    raise SubmissionAPIError(message)
+
+
+def ensure_data_sync_task_succeeded(
+    study_id, sync_url, headers, max_polls, poll_interval
+):
+    last_response_data = None
+    for _ in range(max_polls + 1):
+        response = requests.get(sync_url, headers=headers, timeout=30)
+        response.raise_for_status()
+        response_data = response.json()
+        last_response_data = response_data
+        raise_for_api_error(response_data)
+
+        status = get_task_status(response_data).upper()
+        if "SUCCESS" in status:
+            return response_data
+        if any(failure in status for failure in ("FAIL", "REVOKED")):
+            raise SubmissionAPIError(
+                f"Data-file synchronisation for {study_id} failed. "
+                f"Last state: {format_task_state(response_data)}"
+            )
+        time.sleep(poll_interval)
+
+    message = f"Data-file synchronisation for {study_id} did not complete in time."
     if last_response_data:
         message = f"{message} Last state: {format_task_state(last_response_data)}"
     raise SubmissionAPIError(message)
@@ -2747,7 +2826,9 @@ def get_default_isa_json_path(study_id):
 
 def get_validation_result(study_id, report, isa_json=None, include_root_causes=False):
     if not isinstance(report, dict):
-        return report
+        raise SubmissionAPIError(
+            f"Validation for {normalize_study_id(study_id)} returned no report."
+        )
 
     content = report.get("content")
     if isinstance(content, dict) and (
@@ -2758,7 +2839,9 @@ def get_validation_result(study_id, report, isa_json=None, include_root_causes=F
         validation_result = report
 
     if not isinstance(validation_result, dict):
-        return validation_result
+        raise SubmissionAPIError(
+            f"Validation for {normalize_study_id(study_id)} completed without a result."
+        )
 
     output = dict(validation_result)
     output.setdefault("accession", normalize_study_id(study_id))
