@@ -182,19 +182,16 @@ mtbls submission data-upload "$STUDY_ID" \
 
 ## 8. Run remote validation
 
-Before validation, index the uploaded data files in the MetaboLights website:
-
-1. Open the [MetaboLights test editor](https://wwwdev.ebi.ac.uk/metabolights/editor) and select your study.
-2. Go to the data-files area and start the file-indexing action.
-3. Wait for indexing to finish and confirm that `data01.raw` is listed for the study.
-
-Indexing makes the uploaded FTP files available to the server-side validation workflow. After it completes, run validation on the uploaded server copy:
+Use `--sync-data-files` to index the uploaded private FTP data before validation. The command waits for indexing to finish and starts remote validation only after it succeeds:
 
 ```bash
 mtbls submission validate "$STUDY_ID" \
   --remote-validation \
+  --sync-data-files \
   --output tutorials/tutorial-01/validation_report.json
 ```
+
+Indexing makes the uploaded FTP files available to the server-side validation workflow. You can confirm that `data01.raw` appears in the study's Files tab in the [MetaboLights test editor](https://wwwdev.ebi.ac.uk/metabolights/editor). If you omit `--sync-data-files`, index the files manually in the website before remote validation.
 
 Open `tutorials/tutorial-01/validation_report.json`. A successful result has no validation errors. If the report contains errors, correct the local metadata, repeat the folder check, upload the changed metadata, and run remote validation again.
 

@@ -872,6 +872,110 @@ def test_validate_study_retries_transient_task_not_found_and_saves_report(
     )
 
 
+@patch("mtblspy.commands.submissions.client.time.sleep")
+@patch("mtblspy.commands.submissions.client.requests.get")
+@patch("mtblspy.commands.submissions.client.requests.post")
+@patch("mtblspy.commands.submissions.client.get_jwt_token")
+@patch("mtblspy.commands.submissions.client.get_base_url")
+def test_validate_study_waits_when_success_status_has_no_task_result(
+    mock_get_base_url,
+    mock_get_jwt_token,
+    mock_post,
+    mock_get,
+    mock_sleep,
+    tmp_path,
+):
+    mock_get_base_url.return_value = "https://wwwdev.ebi.ac.uk/metabolights/ws"
+    mock_get_jwt_token.return_value = "jwt-token"
+    validation_start_response = MagicMock()
+    validation_start_response.json.return_value = {
+        "status": "success",
+        "content": {
+            "task": {
+                "taskId": "validation-task-1",
+                "taskStatus": "SUCCESS",
+                "ready": True,
+                "isSuccessful": True,
+            },
+            "taskResult": None,
+        },
+    }
+    validation_result_response = MagicMock()
+    validation_result_response.json.return_value = {
+        "status": "success",
+        "content": {
+            "task": {
+                "taskId": "validation-task-1",
+                "taskStatus": "SUCCESS",
+                "ready": True,
+                "isSuccessful": True,
+            },
+            "taskResult": {"messages": {"summary": [], "violations": []}},
+        },
+    }
+    mock_post.return_value = validation_start_response
+    mock_get.return_value = validation_result_response
+    report_path = tmp_path / "validation-report.json"
+
+    result = SubmissionClient(api_token="valid-key").validate_study(
+        "MTBLS123", validation_file_path=report_path
+    )
+
+    assert result.errors == []
+    assert json.loads(report_path.read_text(encoding="utf-8")) == {
+        "messages": {"summary": [], "violations": []},
+        "accession": "MTBLS123",
+    }
+    mock_get.assert_called_once()
+    mock_sleep.assert_not_called()
+
+
+@patch("mtblspy.commands.submissions.client.time.sleep")
+@patch("mtblspy.commands.submissions.client.requests.get")
+@patch("mtblspy.commands.submissions.client.requests.post")
+@patch("mtblspy.commands.submissions.client.get_base_url")
+def test_sync_private_ftp_data_files_waits_for_success(
+    mock_get_base_url, mock_post, mock_get, mock_sleep
+):
+    mock_get_base_url.return_value = "https://wwwdev.ebi.ac.uk/metabolights/ws"
+    start_response = MagicMock()
+    start_response.json.return_value = {"task_id": "sync-task-1"}
+    mock_post.return_value = start_response
+
+    running_response = MagicMock()
+    running_response.json.return_value = {
+        "task_id": "sync-task-1",
+        "status": "RUNNING",
+    }
+    success_response = MagicMock()
+    success_response.json.return_value = {
+        "task_id": "sync-task-1",
+        "status": "SUCCESS",
+    }
+    mock_get.side_effect = [running_response, success_response]
+
+    result = SubmissionClient(api_token="valid-key").sync_private_ftp_data_files(
+        "mtbls123", max_polls=2, poll_interval=3
+    )
+
+    assert result["status"] == "SUCCESS"
+    sync_url = (
+        "https://wwwdev.ebi.ac.uk/metabolights/ws/studies/MTBLS123/"
+        "study-folders/rsync-task"
+    )
+    expected_headers = {
+        "user-token": "valid-key",
+        "Dry-Run": "false",
+        "Sync-Type": "data",
+        "Source-Staging-Area": "private-ftp",
+        "Target-Staging-Area": "readonly-study",
+    }
+    mock_post.assert_called_once_with(sync_url, headers=expected_headers, timeout=30)
+    assert mock_get.call_count == 2
+    mock_get.assert_called_with(sync_url, headers=expected_headers, timeout=30)
+    mock_sleep.assert_called_once_with(3)
+
+
 @patch("mtblspy.commands.submissions.client.save_jwt_token")
 @patch("mtblspy.commands.submissions.client.requests.post")
 @patch("mtblspy.commands.submissions.client.get_refresh_token")

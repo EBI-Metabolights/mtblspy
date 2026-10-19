@@ -135,7 +135,7 @@ mtbls submission create --input-file ./study_input.json -o create_response.json
 mtbls submission check-folders --study-id MTBLSxxx --metadata-files-path ./MTBLSxxx --data-files-path ./MTBLSxxx/FILES -o folder_check_report.json
 mtbls submission metadata-upload MTBLSxxx -p ./MTBLSxxx -o metadata_upload_response.json
 mtbls submission data-upload MTBLSxxx --data-files-root-path ./MTBLSxxx/FILES -o data_upload_response.json
-mtbls submission validate MTBLSxxx --remote-validation -o validation_report.json
+mtbls submission validate MTBLSxxx --remote-validation --sync-data-files -o validation_report.json
 ```
 
 ### 1. Download Templates
@@ -594,6 +594,14 @@ mtbls submission validate MTBLSxxx \
   --remote-validation
 ```
 
+Index private FTP data files first, wait for indexing to complete, and then run remote validation:
+
+```bash
+mtbls submission validate MTBLSxxx \
+  --remote-validation \
+  --sync-data-files
+```
+
 Override the configured submission and validation endpoints for remote validation:
 
 ```bash
@@ -831,7 +839,7 @@ Use `-h` or `--help` with any command to see the same options in the terminal.
 | `mtbls submission metadata-upload` | `STUDY_ID` | `--default-submission-data-path`, `-p`, `--metadata-files-path`, `--metadata-path`, `--mtbls-submission-endpoint`, `--selected-files`, `-o`, `--output` |
 | `mtbls submission delete metadata STUDY_ID` | `STUDY_ID` | `--files`, `--base-url` |
 | `mtbls submission data-upload` | `STUDY_ID` | `--data-files-root-path`, `--selected-files`, `--skip-uploaded-files`, `--skip-empty-folders`, `--mtbls-submission-endpoint`, `-o`, `--output`, `--progress`, `--no-progress` |
-| `mtbls submission validate` | `STUDY_ID` | `--default-submission-data-path`, `-p`, `--metadata-files-path`, `--metadata-path`, `--data-files-root-path`, `--remote-validation`, `--mtbls-validation-wasm-path`, `--mtbls-validation-wasm-url`, `--mtbls-validation-endpoint`, `--mtbls-submission-endpoint`, `--validation-bundle-path`, `--mtbls-validation-bundle-path`, `--validation-bundle-url`, `--mtbls-validation-bundle-url`, `--refetch-validation-bundle`, `--opa-executable-path`, `--validation-input-path`, `--config-file`, `--overridden-rules-file-path`, `--max-polls`, `--poll-interval`, `--timeout`, `-o`, `-v`, `--output`, `--validation-file-path`, `--validation_file_path`, `--output-format` |
+| `mtbls submission validate` | `STUDY_ID` | `--default-submission-data-path`, `-p`, `--metadata-files-path`, `--metadata-path`, `--data-files-root-path`, `--remote-validation`, `--sync-data-files`, `--mtbls-validation-wasm-path`, `--mtbls-validation-wasm-url`, `--mtbls-validation-endpoint`, `--mtbls-submission-endpoint`, `--validation-bundle-path`, `--mtbls-validation-bundle-path`, `--validation-bundle-url`, `--mtbls-validation-bundle-url`, `--refetch-validation-bundle`, `--opa-executable-path`, `--validation-input-path`, `--config-file`, `--overridden-rules-file-path`, `--max-polls`, `--poll-interval`, `--timeout`, `-o`, `-v`, `--output`, `--validation-file-path`, `--validation_file_path`, `--output-format` |
 | `mtbls submission compress-data-files` | `STUDY_ID` | `-p`, `--study-path`, `--files-path`, `--metadata-path`, `--overwrite`, `--no-overwrite`, `--update-metadata`, `--no-update-metadata`, `--remove-original` |
 | `mtbls submission templates study-creation-input` | None | `-o`, `--output`, `--data-folder`, `--overwrite`, `--no-overwrite` |
 | `mtbls submission templates isa-tab-file` | `FILE_TYPE` | `--template-name`, `--version`, `--target-path`, `--override-current`, `--mtbls-validation-endpoint` |

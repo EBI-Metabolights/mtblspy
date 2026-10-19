@@ -44,7 +44,7 @@ Use this path when you already have valid local ISA-Tab metadata and data files.
 | 4 | `mtbls submission metadata-upload STUDY_ID -p PATH` | Upload ISA-Tab metadata files. |
 | 5 | `mtbls submission data-upload STUDY_ID --data-files-root-path PATH` | Upload data files to private FTP. |
 | 6 | `mtbls submission delete metadata STUDY_ID --files FILES` | Delete selected uploaded metadata files only when they are not referenced by active study metadata. |
-| 7 | `mtbls submission validate STUDY_ID --remote-validation` | Run server-side validation. |
+| 7 | `mtbls submission validate STUDY_ID --remote-validation --sync-data-files` | Index uploaded data and run server-side validation. |
 
 ```bash
 mtbls auth login
@@ -52,7 +52,7 @@ mtbls submission create --input-file ./study_input.json -o create_response.json
 mtbls submission check-folders --study-id MTBLSxxx --metadata-files-path ./MTBLSxxx --data-files-path ./MTBLSxxx/FILES -o folder_check_report.json
 mtbls submission metadata-upload MTBLSxxx -p ./MTBLSxxx -o metadata_upload_response.json
 mtbls submission data-upload MTBLSxxx --data-files-root-path ./MTBLSxxx/FILES -o data_upload_response.json
-mtbls submission validate MTBLSxxx --remote-validation -o validation_report.json
+mtbls submission validate MTBLSxxx --remote-validation --sync-data-files -o validation_report.json
 ```
 
 Example metadata upload success output:
@@ -130,6 +130,7 @@ mtbls submission validate MTBLSxxx \
 
 mtbls submission validate MTBLSxxx \
   --remote-validation \
+  --sync-data-files \
   --max-polls 180 \
   --poll-interval 10 \
   -o remote_validation_report.json
@@ -573,7 +574,7 @@ mtbls submission validate MTBLSxxx \
 Remote validation:
 
 ```bash
-mtbls submission validate MTBLSxxx --remote-validation -o remote_validation_report.json
+mtbls submission validate MTBLSxxx --remote-validation --sync-data-files -o remote_validation_report.json
 ```
 
 | Name | Required | Kind | Purpose |
@@ -583,6 +584,7 @@ mtbls submission validate MTBLSxxx --remote-validation -o remote_validation_repo
 | `-p`, `--metadata-files-path`, `--metadata-path` | No | Option | Local ISA-Tab metadata directory. |
 | `--data-files-root-path` | Local only | Option | Local data root for local validation. Not required for `--remote-validation`. |
 | `--remote-validation` | No | Flag | Run validation through the remote submission API. |
+| `--sync-data-files` | Remote only | Flag | Index private FTP data files and wait for completion before validation. |
 | `--mtbls-validation-wasm-path` | No | Option | Local standalone WASM or OPA WASM validation bundle path. |
 | `--mtbls-validation-wasm-url` | No | Option | URL to download validation WASM when missing. |
 | `--mtbls-validation-endpoint` | No | Option | Validation API endpoint for remote validation. |
