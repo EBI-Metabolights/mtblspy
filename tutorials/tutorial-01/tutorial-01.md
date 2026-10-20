@@ -138,6 +138,20 @@ mtbls submission templates result-file \
   --override-current
 ```
 
+### Add the LC-MS assay to the investigation file
+
+Open `tutorials/tutorial-01/test-data/i_Investigation.txt`. In its `STUDY ASSAYS` section, add or update the following rows so the investigation file registers the assay file and its LC-MS details. Keep the tab-separated format used by the template:
+
+```text
+STUDY ASSAYS
+Study Assay File Name	a_${STUDY_ID}_lc-ms.txt
+Study Assay Measurement Type	metabolite profiling
+Study Assay Technology Type	mass spectrometry
+Study Assay Technology Platform	LC-MS
+```
+
+If the template already includes these rows, update their values rather than adding duplicate rows. For more than one assay, add a further tab-separated value in each applicable row, in the same column position as its assay filename.
+
 Review the downloaded investigation file, then complete the sample, assay, and MAF sheets with the appropriate details for your experiment; do not leave the downloaded example rows and values unchanged. In particular:
 
 - Confirm that `$STUDY_ID` appears in the investigation and study identifier fields.
