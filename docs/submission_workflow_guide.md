@@ -641,6 +641,8 @@ Remote validation:
 mtbls submission validate MTBLSxxx --remote-validation --sync-data-files -o remote_validation_report.json
 ```
 
+Both local and remote report JSON files include top-level `errorCount` and `warningCount` fields. The repeated validation `summary` section is omitted, while the detailed violations remain available for diagnosis.
+
 | Name | Required | Kind | Purpose |
 | --- | --- | --- | --- |
 | `STUDY_ID` | Yes | Argument | Study accession. |

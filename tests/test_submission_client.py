@@ -15,6 +15,7 @@ from mtblspy.commands.submissions.client import (
     get_studies_from_user_response,
     get_validation_errors,
     get_validation_result,
+    get_validation_warnings,
     resolve_data_download_target_path,
     resolve_download_target_path,
     save_isa_json,
@@ -856,8 +857,10 @@ def test_validate_study_retries_transient_task_not_found_and_saves_report(
 
     assert result.errors == []
     assert json.loads(report_path.read_text(encoding="utf-8")) == {
-        "messages": {"summary": [], "violations": []},
+        "messages": {"violations": []},
         "accession": "MTBLS123",
+        "errorCount": 0,
+        "warningCount": 0,
     }
     mock_sleep.assert_called_once_with(5)
     validation_headers = {
@@ -923,8 +926,10 @@ def test_validate_study_waits_when_success_status_has_no_task_result(
 
     assert result.errors == []
     assert json.loads(report_path.read_text(encoding="utf-8")) == {
-        "messages": {"summary": [], "violations": []},
+        "messages": {"violations": []},
         "accession": "MTBLS123",
+        "errorCount": 0,
+        "warningCount": 0,
     }
     mock_get.assert_called_once()
     mock_sleep.assert_not_called()
@@ -1189,6 +1194,46 @@ def test_validation_result_extracts_v2_policy_root_causes():
             "value": ["missing.raw"],
         }
     ]
+
+
+def test_validation_result_adds_counts_and_removes_summary():
+    report = {
+        "content": {
+            "taskResult": {
+                "status": "FAILED",
+                "messages": {
+                    "status": "WARNING",
+                    "summary": [{"type": "WARNING", "title": "Duplicate"}],
+                    "violations": [
+                        {
+                            "type": "ERROR",
+                            "title": "Invalid assay group",
+                            "details": [
+                                {"type": "ERROR", "title": "Invalid assay"}
+                            ],
+                        },
+                        {
+                            "type": "WARNING",
+                            "title": "Metadata recommendations",
+                            "details": [
+                                {
+                                    "type": "WARNING",
+                                    "title": "Recommended metadata",
+                                }
+                            ],
+                        },
+                    ],
+                }
+            }
+        }
+    }
+
+    validation_result = get_validation_result("MTBLS123", report)
+
+    assert validation_result["errorCount"] == 1
+    assert validation_result["warningCount"] == 1
+    assert "summary" not in validation_result["messages"]
+    assert len(get_validation_warnings(report)) == 3
 
 
 @patch("mtblspy.commands.submissions.client.requests.get")

@@ -2484,6 +2484,72 @@ def get_validation_errors(report):
     return deduplicate_validation_errors(collect_validation_errors(report))
 
 
+def get_validation_warnings(report):
+    return deduplicate_validation_errors(collect_validation_warnings(report))
+
+
+def count_validation_errors(errors):
+    return count_leaf_validation_messages(errors, is_validation_error_item)
+
+
+def count_validation_warnings(warnings):
+    return count_leaf_validation_messages(warnings, is_validation_warning_item)
+
+
+def count_leaf_validation_messages(messages, message_matcher):
+    leaf_messages = collect_leaf_validation_messages(messages, message_matcher)
+    return len(deduplicate_validation_errors(leaf_messages))
+
+
+def collect_leaf_validation_messages(value, message_matcher):
+    if isinstance(value, list):
+        messages = []
+        for item in value:
+            messages.extend(collect_leaf_validation_messages(item, message_matcher))
+        return messages
+    if not isinstance(value, dict):
+        return []
+
+    nested_messages = []
+    for key, item in value.items():
+        if key == "summary" or not isinstance(item, (dict, list)):
+            continue
+        nested_messages.extend(
+            collect_leaf_validation_messages(item, message_matcher)
+        )
+    if nested_messages:
+        return nested_messages
+    if message_matcher(value) and is_detailed_validation_message(value):
+        return [value]
+    return []
+
+
+def is_detailed_validation_message(value):
+    return has_validation_message(value) or any(
+        value.get(key)
+        for key in (
+            "identifier",
+            "ruleId",
+            "rule",
+            "sourceFile",
+            "jsonPath",
+            "path",
+        )
+    )
+
+
+def remove_validation_summaries(value):
+    if isinstance(value, list):
+        return [remove_validation_summaries(item) for item in value]
+    if not isinstance(value, dict):
+        return value
+    return {
+        key: remove_validation_summaries(item)
+        for key, item in value.items()
+        if key != "summary"
+    }
+
+
 def enrich_validation_errors_with_isa_json(errors, isa_json):
     enriched_errors = []
     for error in errors:
@@ -2573,6 +2639,45 @@ def is_validation_error_item(value):
             "FAILED",
             "FATAL",
         ):
+            return True
+    return False
+
+
+def collect_validation_warnings(value, section_name=""):
+    warnings = []
+    if isinstance(value, list):
+        for item in value:
+            warnings.extend(collect_validation_warnings(item, section_name))
+        return warnings
+
+    if not isinstance(value, dict):
+        return warnings
+
+    current_section = (
+        value.get("section")
+        or value.get("sectionName")
+        or value.get("context")
+        or section_name
+    )
+    if is_validation_warning_item(value):
+        warning = dict(value)
+        if current_section:
+            warning.setdefault("section", current_section)
+        warnings.append(warning)
+
+    for key, item in value.items():
+        if key == "summary" or not isinstance(item, (dict, list)):
+            continue
+        warnings.extend(collect_validation_warnings(item, current_section))
+    return warnings
+
+
+def is_validation_warning_item(value):
+    if not isinstance(value, dict):
+        return False
+    for key in ("type", "status", "severity", "level"):
+        indicator = value.get(key)
+        if isinstance(indicator, str) and indicator.upper() in ("WARNING", "WARN"):
             return True
     return False
 
@@ -2843,10 +2948,13 @@ def get_validation_result(study_id, report, isa_json=None, include_root_causes=F
             f"Validation for {normalize_study_id(study_id)} completed without a result."
         )
 
-    output = dict(validation_result)
+    errors = get_validation_errors(validation_result)
+    warnings = get_validation_warnings(validation_result)
+    output = remove_validation_summaries(validation_result)
     output.setdefault("accession", normalize_study_id(study_id))
+    output["errorCount"] = count_validation_errors(errors)
+    output["warningCount"] = count_validation_warnings(warnings)
     if include_root_causes:
-        errors = get_validation_errors(validation_result)
         if isa_json:
             errors = enrich_validation_errors_with_isa_json(errors, isa_json)
         if errors:

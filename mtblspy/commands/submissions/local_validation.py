@@ -15,7 +15,11 @@ from mtblspy.commands.output import resolve_json_output_path, write_json_file
 from mtblspy.commands.submissions.client import (
     DEFAULT_LOCAL_SUBMISSION_CACHE_PATH,
     DEFAULT_LOCAL_SUBMISSION_DATA_PATH,
+    count_validation_errors,
+    count_validation_warnings,
+    get_validation_warnings,
     normalize_study_id,
+    remove_validation_summaries,
 )
 from mtblspy.commands.submissions.exceptions import SubmissionAPIError
 
@@ -94,10 +98,13 @@ def run_local_validation(
     errors, overrides = split_validation_errors(
         validation_result, overridden_rule_ids, overridden_files
     )
+    warnings = get_validation_warnings(validation_result)
     report = {
         "accession": study_id,
         "status": "failed" if errors else "success",
-        "validationResult": validation_result,
+        "errorCount": count_validation_errors(errors),
+        "warningCount": count_validation_warnings([*warnings, *overrides]),
+        "validationResult": remove_validation_summaries(validation_result),
         "errors": errors,
         "overrides": overrides,
     }
