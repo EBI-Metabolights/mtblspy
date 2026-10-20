@@ -1,6 +1,6 @@
 # ELIXIR Metabolomics Community Meeting 2026 tutorial
 
-This tutorial uses `mtblspy` to submit a small example metabolomics study to the [MetaboLights test server](https://wwwdev.ebi.ac.uk/metabolights/). Run the commands from the repository root. Replace `MTBLSxxx` in the commands with the accession returned when you create your study.
+This tutorial uses `mtblspy` to submit a small example metabolomics study to the [MetaboLights test server](https://wwwdev.ebi.ac.uk/metabolights/). Run the commands from the repository root. Replace `REQxxx` in the commands with the accession returned when you create your study.
 
 The workflow is:
 
@@ -88,7 +88,7 @@ mtbls submission create \
   --output tutorials/tutorial-01/create_response.json
 ```
 
-The response contains a new accession such as `REQxxxxx`. Use your returned accession everywhere this tutorial shows `MTBLSxxx`. Confirm that the study belongs to your account:
+The response contains a new accession such as `REQxxxxx`. Use your returned accession everywhere this tutorial shows `REQxxx`. Confirm that the study belongs to your account:
 
 ```bash
 mtbls submission list
@@ -127,11 +127,14 @@ mtbls submission templates result-file \
   --override-current
 ```
 
-Edit the downloaded files and replace their example values with the tutorial study values. In particular:
+Complete the sample, assay, and MAF sheets with the appropriate details for your experiment; do not leave the downloaded example rows and values unchanged. In particular:
 
 - Put `$STUDY_ID` in the investigation and study identifier fields.
 - In `i_Investigation.txt`, reference `s_${STUDY_ID}.txt` and `a_${STUDY_ID}_lc-ms.txt`.
-- In the assay file, reference `m_${STUDY_ID}.tsv` and the data file as `FILES/RAW_FILES/data01.raw`.
+- In the sample sheet, add the study samples and their sample characteristics.
+- In the assay sheet, complete the assay rows and use the `Raw Spectral Data File` column to reference `FILES/RAW_FILES/data01.raw`. This removes the `data_files_not_referenced` warning.
+- In the assay sheet, use the `Metabolite Assignment File` column to reference `m_${STUDY_ID}.tsv`. This removes the `assignment_files_not_referenced` warning.
+- In the MAF sheet, add the metabolite-assignment results for the assay data.
 - Keep the supplied example data file at `test-data/FILES/RAW_FILES/data01.raw`.
 
 Your local directory should now look like this:
@@ -139,15 +142,15 @@ Your local directory should now look like this:
 ```text
 tutorials/tutorial-01/test-data/
 ├── i_Investigation.txt
-├── s_MTBLSxxx.txt
-├── a_MTBLSxxx_lc-ms.txt
-├── m_MTBLSxxx.tsv
+├── s_REQxxx.txt
+├── a_REQxxx_lc-ms.txt
+├── m_REQxxx.tsv
 └── FILES/
     └── RAW_FILES/
         └── data01.raw
 ```
 
-The `MTBLSxxx` part above represents your actual accession.
+The `REQxxx` part above represents your actual accession.
 
 ## 6. Check the local folders
 
@@ -160,7 +163,7 @@ mtbls submission check-folders \
   --output tutorials/tutorial-01/folder_check_report.json
 ```
 
-The data path defaults to `FILES` under the metadata directory. You can omit `--study-id` when an accession has not been assigned yet; the remaining local structure and reference checks still run. Fix every item in `errors` before continuing. Warnings should also be reviewed.
+The data path defaults to `FILES` under the metadata directory. You can omit `--study-id` when an accession has not been assigned yet; the remaining local structure and reference checks still run. Fix every item in `errors` before continuing. Also resolve the `data_files_not_referenced` and `assignment_files_not_referenced` warnings by completing the assay-sheet references above.
 
 ## 7. Upload metadata and data
 
