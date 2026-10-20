@@ -13,6 +13,7 @@ from mtblspy.commands.submissions.local_validation import (
     normalize_validation_wasm_file,
     parse_opa_validation_output,
     prepare_validation_wasm_artifact,
+    run_local_validation,
     run_wasm_validation,
     split_validation_errors,
 )
@@ -72,6 +73,76 @@ def test_split_validation_errors_filters_non_errors_and_overrides():
             "overrideComment": "rule id is in the exclude list",
         }
     ]
+
+
+def test_local_validation_report_adds_counts_and_removes_summary(
+    monkeypatch, tmp_path
+):
+    validation_result = {
+        "status": "FAILED",
+        "summary": [{"type": "WARNING", "title": "Duplicate"}],
+        "violations": [
+            {
+                "type": "ERROR",
+                "title": "Error group",
+                "details": [
+                    {
+                        "type": "ERROR",
+                        "identifier": "rule-error",
+                        "title": "Error",
+                    }
+                ],
+            },
+            {
+                "type": "WARNING",
+                "title": "Warning group",
+                "details": [
+                    {
+                        "type": "WARNING",
+                        "identifier": "rule-warning",
+                        "title": "Warning",
+                    }
+                ],
+            },
+        ],
+    }
+    captured = {}
+    monkeypatch.setattr(
+        "mtblspy.commands.submissions.local_validation.load_local_validation_input",
+        lambda *args, **kwargs: {},
+    )
+    monkeypatch.setattr(
+        "mtblspy.commands.submissions.local_validation.save_local_validation_input",
+        lambda *args, **kwargs: tmp_path / "input.json",
+    )
+    monkeypatch.setattr(
+        "mtblspy.commands.submissions.local_validation.run_opa_validation",
+        lambda *args, **kwargs: validation_result,
+    )
+    monkeypatch.setattr(
+        "mtblspy.commands.submissions.local_validation.get_overrides",
+        lambda *args, **kwargs: (set(), set()),
+    )
+
+    def save_report(study_id, report, *args, **kwargs):
+        captured.update(report)
+        return tmp_path / "report.json"
+
+    monkeypatch.setattr(
+        "mtblspy.commands.submissions.local_validation.save_local_validation_report",
+        save_report,
+    )
+
+    result = run_local_validation(
+        "MTBLS123",
+        metadata_path=tmp_path,
+        data_files_path=tmp_path / "FILES",
+    )
+
+    assert result.report["errorCount"] == 1
+    assert result.report["warningCount"] == 1
+    assert "summary" not in result.report["validationResult"]
+    assert captured == result.report
 
 
 def test_text_overrides_include_rule_ids_and_metadata_files(tmp_path):

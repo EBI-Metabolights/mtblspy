@@ -119,7 +119,7 @@ mtbls submission download "$STUDY_ID" metadata \
   --target-path tutorials/tutorial-01/test-data
 ```
 
-For this newly created study, download the sample, assay, and metabolite-assignment (MAF) templates separately. The files must describe the same study category; this example uses LC-MS and the MS assignment template:
+For this newly created study, download the sample, assay, and metabolite-assignment (MAF) templates separately. The generated study-creation input selects the legacy `MS` study category, so use the `MS` assay template expected by that validator. The assay filename and investigation entry still identify the platform as LC-MS:
 
 ```bash
 mtbls submission templates isa-tab-file sample \
@@ -127,7 +127,7 @@ mtbls submission templates isa-tab-file sample \
   --override-current
 
 mtbls submission templates isa-tab-file assay \
-  --template-name LC-MS \
+  --template-name MS \
   --target-path "tutorials/tutorial-01/test-data/a_${STUDY_ID}_lc-ms.txt" \
   --override-current
 
@@ -137,6 +137,8 @@ mtbls submission templates result-file \
   --target-path "tutorials/tutorial-01/test-data/m_${STUDY_ID}.tsv" \
   --override-current
 ```
+
+Do not use `--template-name LC-MS` for this tutorial's legacy `MS` study category. That template contains additional chromatography columns before `Labeled Extract Name`, while validation for this study category expects the generic MS column order. Leaving out `--version` requests the latest supported version of the `MS` template.
 
 ### Add the LC-MS assay to the investigation file
 
@@ -221,6 +223,6 @@ mtbls submission validate "$STUDY_ID" \
 
 Indexing makes the uploaded FTP files available to the server-side validation workflow. You can confirm that `data01.raw` appears in the study's Files tab in the [MetaboLights test editor](https://wwwdev.ebi.ac.uk/metabolights/editor). If you omit `--sync-data-files`, index the files manually in the website before remote validation.
 
-Open `tutorials/tutorial-01/validation_report.json`. A successful result has no validation errors. If the report contains errors, correct the local metadata, repeat the folder check, upload the changed metadata, and run remote validation again.
+Open `tutorials/tutorial-01/validation_report.json`. The top-level `errorCount` and `warningCount` fields give the totals; detailed violations remain in the report, while the repetitive validation summary is omitted. A successful result has `errorCount` set to `0`. If the report contains errors, correct the local metadata, repeat the folder check, upload the changed metadata, and run remote validation again.
 
 `mtblspy` also supports local validation, but it requires an additional local validation bundle and OPA setup. That advanced setup is intentionally outside this introductory tutorial; `mtbls submission validate --help` lists the available local-validation options.

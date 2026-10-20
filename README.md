@@ -443,7 +443,7 @@ It writes two useful JSON files:
 | Output | Contents |
 | --- | --- |
 | Validation input JSON | Local study model sent to OPA |
-| Validation report JSON | Status, full validation result, non-overridden errors, and overrides |
+| Validation report JSON | Status, error/warning counts, detailed violations, non-overridden errors, and overrides |
 
 ### Local OPA bundle validation
 
@@ -926,7 +926,7 @@ The generated template includes fields such as:
 
 ## Validation Reports
 
-Validation report files are JSON. Remote validation reports include the study accession and validation content returned by the MetaboLights validation service.
+Validation report files are JSON. Remote and local reports include top-level `errorCount` and `warningCount` values. Repetitive validation `summary` sections are omitted; detailed violations remain in the report.
 
 Local validation reports include:
 
@@ -934,7 +934,9 @@ Local validation reports include:
 | --- | --- |
 | `accession` | Study accession used for validation |
 | `status` | `success` or `failed` |
-| `validationResult` | Full local validation output from OPA or WASM |
+| `errorCount` | Total non-overridden validation errors |
+| `warningCount` | Total detailed validation warnings |
+| `validationResult` | Detailed local validation output from OPA or WASM, without the summary section |
 | `errors` | Validation errors that were not overridden |
 | `overrides` | Error rules ignored through a validation override config |
 
