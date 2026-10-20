@@ -287,6 +287,33 @@ mtbls submission list -o studies.json
 
 ### 4. Prepare ISA-Tab Metadata
 
+#### Download Existing Study Metadata
+
+Download only the investigation file already created for a provisional study. The target is a directory; mtblspy keeps the server filename and writes `./metadata/MTBLSxxx/i_Investigation.txt`:
+
+```bash
+mtbls submission download MTBLSxxx metadata \
+  --files i_Investigation.txt \
+  --target-path ./metadata/MTBLSxxx
+```
+
+Use a comma-separated list to download several named metadata files:
+
+```bash
+mtbls submission download MTBLSxxx metadata \
+  --files i_Investigation.txt,s_MTBLSxxx.txt \
+  --target-path ./metadata/MTBLSxxx
+```
+
+Omit `--files` to discover and download all ISA-Tab and result metadata currently referenced by the study:
+
+```bash
+mtbls submission download MTBLSxxx metadata \
+  --target-path ./metadata/MTBLSxxx
+```
+
+When `--target-path` is omitted, metadata is saved under `~/metabolights_data/submission/data/<study_id>`. The command prints a JSON result listing downloaded, missing, and failed files. It does not download experimental data files; use the data download command described below for those files.
+
 By default, metadata upload looks under:
 
 ```text
@@ -639,6 +666,28 @@ Use the returned host, user, password, and folder with your preferred FTP/SFTP c
 
 ### 8. Upload Data Files
 
+#### Download Existing Study Data
+
+Data files are downloaded from the study's private FTP area. To avoid unexpectedly large transfers, you must select comma-separated files or folders with `--files`, or explicitly use `--all`:
+
+```bash
+mtbls submission download MTBLSxxx data \
+  --files raw/file1.raw,processed-results \
+  --target-path ./metadata/MTBLSxxx/FILES
+```
+
+Download every data file only when that is intentional:
+
+```bash
+mtbls submission download MTBLSxxx data \
+  --all \
+  --target-path ./metadata/MTBLSxxx/FILES
+```
+
+The command preserves remote relative paths. When `--target-path` is omitted, files are saved under `~/metabolights_data/submission/data/<study_id>/FILES`. Interactive terminals show a progress bar on stderr; use `--no-progress` to disable it. `--files` and `--all` cannot be used together.
+
+#### Upload Local Data
+
 Upload all files under a local data root to the study private FTP area:
 
 ```bash
@@ -791,6 +840,8 @@ mtbls --help
 | --- | --- |
 | `mtbls submission list` | List studies created by the authenticated user |
 | `mtbls submission create` | Create a provisional study from a JSON input file |
+| `mtbls submission download STUDY_ID metadata` | Download one, several, or all existing study metadata files |
+| `mtbls submission download STUDY_ID data` | Download selected or all study data files from private FTP |
 | `mtbls submission ftp-credentials STUDY_ID` | Get private FTP upload credentials |
 | `mtbls submission clean-ftp-temp-files STUDY_ID` | Remove temporary files left by interrupted data uploads |
 | `mtbls submission check-folders [--study-id STUDY_ID] --metadata-files-path PATH --data-files-path PATH -o REPORT.json` | Check local metadata and data folder prerequisites |
@@ -833,6 +884,8 @@ Use `-h` or `--help` with any command to see the same options in the terminal.
 | --- | --- | --- |
 | `mtbls submission list` | None | `-o`, `--output` |
 | `mtbls submission create` | None | `--input-file`, `--input-format`, `-o`, `--output` |
+| `mtbls submission download STUDY_ID metadata` | `STUDY_ID` | `--base-url`, `--files`, `--target-path`, `--output`, `-o`, `--jwt-token` |
+| `mtbls submission download STUDY_ID data` | `STUDY_ID` | `--base-url`, `--files`, `--all`, `--target-path`, `--output`, `-o`, `--progress`, `--no-progress`, `--jwt-token` |
 | `mtbls submission ftp-credentials` | `STUDY_ID` | `-o`, `--output` |
 | `mtbls submission clean-ftp-temp-files` | `STUDY_ID` | `--mtbls-submission-endpoint`, `-o`, `--output` |
 | `mtbls submission check-folders` | None | `--study-id`, `-p`, `--metadata-files-path`, `--metadata-path`, `--data-files-path`, `--data-files-root-path`, `-o`, `--output` |

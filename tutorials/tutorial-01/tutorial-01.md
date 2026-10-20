@@ -8,7 +8,7 @@ The workflow is:
 2. Install `mtblspy`.
 3. Configure and authenticate the command-line tool.
 4. Create and list a provisional study.
-5. Download ISA-Tab templates and prepare the example files.
+5. Download the study investigation, download the remaining templates, and prepare the example files.
 6. Check the local folder structure.
 7. Upload metadata and data.
 8. Run remote validation.
@@ -102,15 +102,26 @@ For convenience, set a shell variable now:
 export STUDY_ID=REQxxx
 ```
 
-## 5. Download and prepare the metadata templates
+## 5. Download and prepare the metadata
 
-The investigation, sample, assay, and metabolite-assignment (MAF) templates must describe the same study category. This example uses LC-MS and the MS assignment template. Download all four into `test-data`:
+The provisional study already has an investigation file containing its accession and the details supplied during study creation. Download that existing file into `test-data` instead of replacing it with a blank investigation template. `--target-path` is a directory; the command keeps the server filename `i_Investigation.txt`:
 
 ```bash
-mtbls submission templates isa-tab-file investigation \
-  --target-path tutorials/tutorial-01/test-data/i_Investigation.txt \
-  --override-current
+mtbls submission download "$STUDY_ID" metadata \
+  --files i_Investigation.txt \
+  --target-path tutorials/tutorial-01/test-data
+```
 
+If the study already contains other metadata that you want to edit locally, omit `--files` to download all metadata currently available for the study:
+
+```bash
+mtbls submission download "$STUDY_ID" metadata \
+  --target-path tutorials/tutorial-01/test-data
+```
+
+For this newly created study, download the sample, assay, and metabolite-assignment (MAF) templates separately. The files must describe the same study category; this example uses LC-MS and the MS assignment template:
+
+```bash
 mtbls submission templates isa-tab-file sample \
   --target-path "tutorials/tutorial-01/test-data/s_${STUDY_ID}.txt" \
   --override-current
@@ -127,9 +138,9 @@ mtbls submission templates result-file \
   --override-current
 ```
 
-Complete the sample, assay, and MAF sheets with the appropriate details for your experiment; do not leave the downloaded example rows and values unchanged. In particular:
+Review the downloaded investigation file, then complete the sample, assay, and MAF sheets with the appropriate details for your experiment; do not leave the downloaded example rows and values unchanged. In particular:
 
-- Put `$STUDY_ID` in the investigation and study identifier fields.
+- Confirm that `$STUDY_ID` appears in the investigation and study identifier fields.
 - In `i_Investigation.txt`, reference `s_${STUDY_ID}.txt` and `a_${STUDY_ID}_lc-ms.txt`.
 - In the sample sheet, add the study samples and their sample characteristics.
 - In the assay sheet, complete the assay rows and use the `Raw Spectral Data File` column to reference `FILES/RAW_FILES/data01.raw`. This removes the `data_files_not_referenced` warning.
