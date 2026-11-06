@@ -39,7 +39,7 @@ from mtblspy.oauth import (
     default_issuer,
     make_session,
     refresh_session,
-    session_source_id,
+    track_session_source,
 )
 
 VALIDATION_MAX_POLLS = 120
@@ -491,7 +491,7 @@ class SubmissionClient:
             client_id=client_id,
             base_url=self.submission_api_base_url,
         )
-        session["source_id"] = session_source_id(session)
+        track_session_source(session)
         if is_jwt_expired(jwt_token):
             session = refresh_session(session)
             jwt_token = session["access_token"]

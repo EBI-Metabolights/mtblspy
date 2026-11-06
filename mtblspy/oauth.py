@@ -1,10 +1,11 @@
 """Refreshable OAuth sessions, including a shared MCP login token cache."""
 
 import base64
-import hashlib
+import hmac
 import json
 import math
 import os
+import secrets
 import time
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -23,8 +24,25 @@ from mtblspy.exceptions import AuthenticationError
 DEFAULT_CLIENT_ID = "swagger-ui-test"
 
 
-def session_source_id(session):
-    return hashlib.sha256(json.dumps(session, sort_keys=True).encode()).hexdigest()
+def session_source_id(session, key):
+    """Identify the original environment credentials without retaining copies."""
+    key_bytes = bytes.fromhex(key)
+    if len(key_bytes) != 32:
+        raise ValueError("Invalid session source key.")
+    source = {
+        name: value
+        for name, value in session.items()
+        if name not in {"source_id", "source_key"}
+    }
+    payload = json.dumps(source, sort_keys=True).encode()
+    return hmac.digest(key_bytes, payload, "sha256").hex()
+
+
+def track_session_source(session):
+    """Keep the random fingerprint key with its refreshable session."""
+    key = secrets.token_hex(32)
+    session["source_id"] = session_source_id(session, key)
+    session["source_key"] = key
 
 
 def decode_claims(token):
@@ -268,17 +286,23 @@ class OAuthSession:
                 client_id=os.getenv("MTBLS_OIDC_CLIENT_ID"),
                 base_url=self.base_url,
             )
-            session["source_id"] = session_source_id(session)
             if token_is_valid(session) and not refresh:
                 return session
             cached = config.get_oauth_session(
                 self.base_url, credential_base_url=self.credential_base_url
             )
-            return (
-                cached
-                if cached and cached.get("source_id") == session["source_id"]
-                else session
-            )
+            if cached and "source_key" in cached:
+                try:
+                    expected = session_source_id(session, cached["source_key"])
+                    matches = hmac.compare_digest(expected, cached.get("source_id", ""))
+                except (TypeError, ValueError):
+                    raise AuthenticationError(
+                        "Your sign-in session could not be loaded. Please sign in again."
+                    ) from None
+                if matches:
+                    return cached
+            track_session_source(session)
+            return session
         return config.get_oauth_session(
             self.base_url, credential_base_url=self.credential_base_url
         )
@@ -292,10 +316,9 @@ class OAuthSession:
         validate_session(session)
         if not force_refresh and token_is_valid(session):
             return session["access_token"]
-        # All CLI processes for this server must re-read after acquiring the lock.
-        identity = hashlib.sha256(self.base_url.encode()).hexdigest()
+        # Re-read after serializing local refreshes; no credential-derived filenames.
         lock_dir = credential_file_path().parent / "locks"
-        with credential_lock(lock_dir / (identity + ".lock")):
+        with credential_lock(lock_dir / "refresh.lock"):
             current = self._configured_session()
             validate_session(current)
             if token_is_valid(current) and (

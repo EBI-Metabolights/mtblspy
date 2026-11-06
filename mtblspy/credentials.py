@@ -1,6 +1,5 @@
 """One credential record per server, with verified migration of older entries."""
 
-import hashlib
 import json
 import logging
 import os
@@ -28,6 +27,7 @@ OAUTH_FIELDS = {
     "scope",
     "requested_scope",
     "source_id",
+    "source_key",
     "token_file",
 }
 logger = logging.getLogger(__name__)
@@ -241,9 +241,9 @@ class CredentialStore:
             )
 
     def _record_lock(self):
-        identity = hashlib.sha256(self.service_name.encode()).hexdigest()
+        # Serialize local record updates without deriving filenames from credentials.
         return credential_lock(
-            credential_file_path().parent / "records" / (identity + ".lock")
+            credential_file_path().parent / "records" / "session.lock"
         )
 
     def _get_field(self, name):
@@ -434,13 +434,14 @@ class CredentialStore:
                 accounts[username] = value
             else:
                 if username not in accounts:
-                    return
+                    return None
                 accounts.pop(username, None)
             if accounts:
                 data[self.service_name] = accounts
             else:
                 data.pop(self.service_name, None)
             write_private_json(path, data)
+            return None
 
     @staticmethod
     def _keyring_error(action):

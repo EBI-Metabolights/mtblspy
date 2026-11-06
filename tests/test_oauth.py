@@ -15,7 +15,12 @@ from mtblspy.commands.cli import cli
 from mtblspy.commands.submissions.client import SubmissionClient
 from mtblspy.commands.submissions.exceptions import AuthenticationError
 from mtblspy.credential_files import read_private_json, write_private_json
-from mtblspy.oauth import OAuthSession, make_session
+from mtblspy.oauth import (
+    OAuthSession,
+    make_session,
+    session_source_id,
+    track_session_source,
+)
 
 BASE = "https://www.ebi.ac.uk/metabolights/ws"
 SUBMISSION = BASE + "3"
@@ -306,6 +311,57 @@ def test_login_with_expired_environment_jwt_reuses_rotated_session(monkeypatch):
         client.login_with_jwt(token, refresh_token="refresh-original")
         assert client.get_auth_headers()["Authorization"].startswith("Bearer ")
     assert post.call_count == 1
+
+
+def test_session_source_fingerprint_is_keyed_and_does_not_keep_token_copies():
+    original = expired_session()
+    first = dict(original)
+    second = dict(original)
+    track_session_source(first)
+    track_session_source(second)
+    assert first["source_key"] != second["source_key"]
+    assert first["source_id"] != second["source_id"]
+    assert session_source_id(original, first["source_key"]) == first["source_id"]
+    assert session_source_id(first, first["source_key"]) == first["source_id"]
+    assert original["refresh_token"] not in first["source_id"]
+    changed = {**original, "refresh_token": "different-login"}
+    assert session_source_id(changed, first["source_key"]) != first["source_id"]
+
+
+def test_new_environment_credentials_do_not_reuse_previous_login(monkeypatch):
+    token = jwt(time.time() + 3600)
+    monkeypatch.setenv("MTBLS_JWT_TOKEN", token)
+    monkeypatch.setenv("MTBLS_REFRESH_TOKEN", "original-refresh")
+    client = SubmissionClient(base_url=BASE)
+    client.login_with_jwt(token, refresh_token="original-refresh")
+    with patch("mtblspy.oauth.requests.post", return_value=response()) as post:
+        manager().get_access_token(force_refresh=True)
+    assert post.call_args.kwargs["data"]["refresh_token"] == "original-refresh"
+    monkeypatch.setenv("MTBLS_REFRESH_TOKEN", "replacement-login-refresh")
+    with patch("mtblspy.oauth.requests.post", return_value=response()) as post:
+        manager().get_access_token(force_refresh=True)
+    assert post.call_args.kwargs["data"]["refresh_token"] == "replacement-login-refresh"
+
+
+def test_invalid_cached_source_key_fails_without_exposing_session_details(monkeypatch):
+    token = jwt(time.time() + 3600)
+    monkeypatch.setenv("MTBLS_JWT_TOKEN", token)
+    monkeypatch.setenv("MTBLS_REFRESH_TOKEN", "private-refresh-value")
+    saved = make_session(token, "private-refresh-value", base_url=BASE)
+    saved.update(source_key="invalid-secret-key", source_id="unusable")
+    manager().save(saved)
+    with pytest.raises(AuthenticationError, match="Please sign in again") as error:
+        manager().get_access_token()
+    assert "invalid-secret-key" not in str(error.value)
+    assert "private-refresh-value" not in str(error.value)
+
+
+def test_stored_sessions_without_source_tracking_still_work():
+    token = jwt(time.time() + 3600)
+    saved = make_session(token, "refresh", base_url=BASE)
+    saved["source_id"] = "legacy-fingerprint"
+    manager().save(saved)
+    assert manager().get_access_token() == token
 
 
 def test_environment_access_only_session_does_not_touch_keyring(monkeypatch):
