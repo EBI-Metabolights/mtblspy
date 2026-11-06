@@ -1,5 +1,5 @@
 version = 1
-revision = 5
+revision = 3
 requires-python = ">=3.12"
 
 [[package]]
@@ -585,6 +585,7 @@ version = "0.1.1"
 source = { editable = "." }
 dependencies = [
     { name = "click" },
+    { name = "filelock" },
     { name = "keyring" },
     { name = "pre-commit" },
     { name = "pydantic" },
@@ -604,6 +605,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "click", specifier = ">=8.1.7" },
+    { name = "filelock", specifier = ">=3.20.0" },
     { name = "keyring", specifier = ">=25.0.0" },
     { name = "pre-commit", specifier = ">=4.7.0" },
     { name = "pydantic", specifier = ">=2.6.1" },

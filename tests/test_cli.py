@@ -120,8 +120,11 @@ def test_auth_login_uses_provided_base_url(mock_client_cls, runner):
     client.login.assert_called_once_with("user@example.org", "password")
 
 
+@patch("mtblspy.commands.auth.login.can_prompt", return_value=True)
 @patch("mtblspy.commands.auth.login.SubmissionClient")
-def test_auth_login_prompts_for_missing_values(mock_client_cls, runner):
+def test_auth_login_prompts_for_missing_values(
+    mock_client_cls, mock_can_prompt, runner
+):
     client = MagicMock()
     client.rest_api_base_url = "https://wwwdev.ebi.ac.uk/metabolights/ws"
     mock_client_cls.return_value = client

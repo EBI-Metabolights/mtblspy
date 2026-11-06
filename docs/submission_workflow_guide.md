@@ -184,20 +184,45 @@ Authenticate with MetaboLights.
 mtbls auth login --user user@example.org --password 'secret'
 ```
 
-Or store an existing submission API JWT token:
+Or sign in with an existing submission API JWT token:
 
 ```bash
 mtbls auth login --jwt-token "$MTBLS_JWT_TOKEN"
 ```
 
-Alternatively, you can pass `--jwt-token "$MTBLS_JWT_TOKEN"` directly to any `mtbls submission` command. This will authenticate the client, fetch the API token in the background, and seamlessly store both tokens for subsequent commands to use.
+You can also pass `--jwt-token "$MTBLS_JWT_TOKEN"` directly to a `mtbls submission` command to authenticate it.
 
 | Name | Required | Kind | Purpose |
 | --- | --- | --- | --- |
 | `--user`, `--username` | No | Option | MetaboLights username or email. If omitted, prompts interactively. |
 | `--password` | No | Option | MetaboLights password. If omitted, prompts interactively. |
 | `--jwt-token` | No | Option | Existing submission API JWT token. When provided, username and password are not required. |
-| `--base-url` | No | Option | API base URL for this login. Defaults to saved config or production. |
+| `--base-url` | No | Option | API base URL for this login. Defaults to `MTBLS_BASE_URL` or the saved/default server. |
+| `--refresh-token` | No | Option | Refresh token accompanying the JWT. Environment: `MTBLS_REFRESH_TOKEN`. |
+| `--issuer` | No | Option | OAuth realm URL; defaults to the selected server. Environment: `MTBLS_OIDC_ISSUER`. |
+| `--client-id` | No | Option | OAuth client ID; defaults to the JWT's authorized party or the legacy client. Environment: `MTBLS_OIDC_CLIENT_ID`. |
+| `--token-file` | No | Option | Reuse an existing MCP sign-in session. Environment: `MTBLS_TOKEN_FILE`. |
+| `--non-interactive` | No | Flag | Fail instead of prompting for missing credentials. Environment: `MTBLS_NON_INTERACTIVE=1`. |
+
+For a pipeline login, set `MTBLS_JWT_TOKEN` and `MTBLS_REFRESH_TOKEN` in the
+environment, then run:
+
+```bash
+mtbls auth login --base-url https://www.ebi.ac.uk/metabolights/ws --non-interactive
+```
+
+To reuse an MCP login instead:
+
+```bash
+mtbls auth login \
+  --base-url https://www.ebi.ac.uk/metabolights/ws \
+  --token-file /absolute/private/path/to/mcp-login.json \
+  --non-interactive
+```
+
+Access tokens refresh automatically when a valid refresh token is available.
+Expired or revoked sessions require another login. For later CI jobs, obtain
+fresh credentials or reuse a valid sign-in session.
 
 Example output:
 
@@ -208,15 +233,21 @@ Login successful.
 
 #### `mtbls auth logout`
 
-Clear the stored login session.
+Sign out of MetaboLights.
 
 ```bash
 mtbls auth logout
+mtbls auth logout --all
 ```
 
 | Name | Required | Kind | Purpose |
 | --- | --- | --- | --- |
 | `--base-url` | No | Option | API base URL whose stored session should be cleared. |
+| `--all` | No | Flag | Sign out of all known server sessions. Cannot be combined with `--base-url`. |
+
+Production, development, and locally registered servers are included. For an older
+custom server that has not been registered, use `--base-url` explicitly.
+Environment credentials and the MCP sign-in remain active independently.
 
 ### 2. Configuration
 
@@ -418,7 +449,7 @@ Without `--target-path`, metadata is saved to `~/metabolights_data/submission/da
 | `--files` | No | Option | Comma-separated metadata filenames. Omit to download all discovered metadata. |
 | `-o`, `--output`, `--target-path` | No | Option | Destination directory. |
 | `--base-url` | No | Option | REST API base URL used to select credentials. |
-| `--jwt-token` | No | Option | Override the stored JWT token. |
+| `--jwt-token` | No | Option | Override the current JWT token. |
 
 #### `mtbls submission download STUDY_ID data`
 
@@ -444,7 +475,7 @@ Remote relative paths are preserved. Without `--target-path`, data is saved to `
 | `-o`, `--output`, `--target-path` | No | Option | Destination directory. |
 | `--progress`, `--no-progress` | No | Option | Show or disable interactive progress. Default: `--progress`. |
 | `--base-url` | No | Option | REST API base URL used to select credentials. |
-| `--jwt-token` | No | Option | Override the stored JWT token. |
+| `--jwt-token` | No | Option | Override the current JWT token. |
 
 ### 6. Metadata Upload
 
