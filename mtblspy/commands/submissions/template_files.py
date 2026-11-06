@@ -60,7 +60,12 @@ def isa_tab_file_template(
 
 
 @click.command(name="result-file")
-@click.option("--file-type", default="maf", show_default=True, help="Result template file type. Use maf for assignment.")
+@click.option(
+    "--file-type",
+    default="maf",
+    show_default=True,
+    help="Result template file type. Use maf for assignment.",
+)
 @click.option("--template-name", help="Template name to download, such as MS or NMR.")
 @click.option("--version", help="Template version to download.")
 @click.option(
@@ -123,7 +128,9 @@ def download_template_file(
         response = requests.get(url, params=params, timeout=60)
     raise_for_template_response_error(response, params)
 
-    filename = get_response_filename(response) or default_template_filename(api_file_type, template_name)
+    filename = get_response_filename(response) or default_template_filename(
+        api_file_type, template_name
+    )
     output_path = resolve_template_output_path(target_path, filename)
     if output_path.exists() and not override_current:
         raise SubmissionAPIError(f"Template file already exists: {output_path}")
@@ -145,7 +152,9 @@ def raise_for_template_response_error(response, params):
     except requests.HTTPError as exc:
         hint = ""
         if params.get("file_type") == "assay":
-            hint = " For assay templates, try template names such as LC-MS, GC-MS, or NMR."
+            hint = (
+                " For assay templates, try template names such as LC-MS, GC-MS, or NMR."
+            )
         if params.get("file_type") == "assignment":
             hint = " For MAF/result templates, mtblspy sends file_type=assignment to the API."
         raise SubmissionAPIError(f"{exc}.{hint}") from exc
@@ -179,7 +188,9 @@ def normalize_endpoint(endpoint):
 
 
 def get_response_filename(response):
-    content_disposition = response.headers.get("Content-Disposition") or response.headers.get("content-disposition")
+    content_disposition = response.headers.get(
+        "Content-Disposition"
+    ) or response.headers.get("content-disposition")
     if not content_disposition:
         return None
 

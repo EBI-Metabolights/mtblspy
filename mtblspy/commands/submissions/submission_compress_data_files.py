@@ -222,9 +222,9 @@ def build_metadata_replacements(files_root, dot_d_directories):
 
 
 def is_metadata_filename(filename):
-    return (
-        filename.startswith(("a_", "s_", "i_")) and filename.endswith(".txt")
-    ) or (filename.startswith("m_") and filename.endswith(".tsv"))
+    return (filename.startswith(("a_", "s_", "i_")) and filename.endswith(".txt")) or (
+        filename.startswith("m_") and filename.endswith(".tsv")
+    )
 
 
 def update_tsv_cells(text, replacements):

@@ -19,7 +19,9 @@ class StudyInputFormat(str, Enum):
 
 class StudyCreationRequest(CamelCaseModel):
     selected_template_version: str | None = None
-    selected_study_categories: dict[str, list[str]] = Field(default_factory=lambda: {"ms-mhd-legacy": []})
+    selected_study_categories: dict[str, list[str]] = Field(
+        default_factory=lambda: {"ms-mhd-legacy": []}
+    )
     selected_investigation_file_template: str | None = None
     selected_sample_file_template: str | None = None
     dataset_license_agreement: bool = False

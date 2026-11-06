@@ -40,5 +40,7 @@ def write_json_file(data, output_path):
 
 
 def save_json_output(data, output_path, default_directory, default_filename):
-    resolved_path = resolve_json_output_path(output_path, default_directory, default_filename)
+    resolved_path = resolve_json_output_path(
+        output_path, default_directory, default_filename
+    )
     return write_json_file(data, resolved_path)

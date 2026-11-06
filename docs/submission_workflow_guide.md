@@ -40,19 +40,19 @@ Use this path when you already have valid local ISA-Tab metadata and data files.
 | --- | --- | --- |
 | 1 | `mtbls auth login` | Authenticate with MetaboLights. |
 | 2 | `mtbls submission create` | Create a provisional study from `study_input.json`. |
-| 3 | `mtbls submission check-folders STUDY_ID --metadata-files-path PATH --data-files-path PATH -o REPORT.json` | Check local metadata and data folder prerequisites. |
+| 3 | `mtbls submission check-folders [--study-id STUDY_ID] --metadata-files-path PATH --data-files-path PATH -o REPORT.json` | Check local metadata and data folder prerequisites. |
 | 4 | `mtbls submission metadata-upload STUDY_ID -p PATH` | Upload ISA-Tab metadata files. |
 | 5 | `mtbls submission data-upload STUDY_ID --data-files-root-path PATH` | Upload data files to private FTP. |
 | 6 | `mtbls submission delete metadata STUDY_ID --files FILES` | Delete selected uploaded metadata files only when they are not referenced by active study metadata. |
-| 7 | `mtbls submission validate STUDY_ID --remote-validation` | Run server-side validation. |
+| 7 | `mtbls submission validate STUDY_ID --remote-validation --sync-data-files` | Index uploaded data and run server-side validation. |
 
 ```bash
 mtbls auth login
 mtbls submission create --input-file ./study_input.json -o create_response.json
-mtbls submission check-folders MTBLSxxx --metadata-files-path ./MTBLSxxx --data-files-path ./MTBLSxxx/FILES -o folder_check_report.json
+mtbls submission check-folders --study-id MTBLSxxx --metadata-files-path ./MTBLSxxx --data-files-path ./MTBLSxxx/FILES -o folder_check_report.json
 mtbls submission metadata-upload MTBLSxxx -p ./MTBLSxxx -o metadata_upload_response.json
 mtbls submission data-upload MTBLSxxx --data-files-root-path ./MTBLSxxx/FILES -o data_upload_response.json
-mtbls submission validate MTBLSxxx --remote-validation -o validation_report.json
+mtbls submission validate MTBLSxxx --remote-validation --sync-data-files -o validation_report.json
 ```
 
 Example metadata upload success output:
@@ -88,39 +88,43 @@ Use this path when you want repeatable pipeline output, custom endpoints, templa
 mtbls config set --base-url https://www.ebi.ac.uk/metabolights/ws
 mtbls config show -o mtbls_config.json
 
-# 2. Download or create starter files.
+# 2. Create the study-creation input.
 mtbls submission templates study-creation-input -o ./study_input.json
-mtbls submission templates isa-tab-file investigation --target-path ./MTBLSxxx --override-current
-mtbls submission templates isa-tab-file sample --target-path ./MTBLSxxx --override-current
-mtbls submission templates isa-tab-file assay --template-name LC-MS --target-path ./MTBLSxxx --override-current
-mtbls submission templates result-file --file-type maf --template-name MS --target-path ./MTBLSxxx --override-current
 
 # 3. Create the provisional study and save the response.
 mtbls submission create --input-file ./study_input.json -o create_response.json
 
-# 4. Optional: compress Agilent .d directories before upload.
+# 4. Replace MTBLSxxx with the returned accession. Download its investigation,
+# then download templates for metadata that does not exist yet.
+mtbls submission download MTBLSxxx metadata --files i_Investigation.txt --target-path ./MTBLSxxx
+mtbls submission templates isa-tab-file sample --target-path ./MTBLSxxx --override-current
+mtbls submission templates isa-tab-file assay --template-name LC-MS --target-path ./MTBLSxxx --override-current
+mtbls submission templates result-file --file-type maf --template-name MS --target-path ./MTBLSxxx --override-current
+
+# 5. Optional: compress Agilent .d directories before upload.
 mtbls submission compress-data-files MTBLSxxx --study-path ./MTBLSxxx --update-metadata
 
-# 5. Check local metadata and data folder prerequisites.
-mtbls submission check-folders MTBLSxxx \
+# 6. Check local metadata and data folder prerequisites.
+mtbls submission check-folders \
+  --study-id MTBLSxxx \
   --metadata-files-path ./MTBLSxxx \
   --data-files-path ./MTBLSxxx/FILES \
   -o folder_check_report.json
 
-# 6. Upload only selected metadata files.
+# 7. Upload only selected metadata files.
 mtbls submission metadata-upload MTBLSxxx \
   --metadata-files-path ./MTBLSxxx \
   --selected-files i_Investigation.txt,s_MTBLSxxx.txt \
   -o metadata_upload_response.json
 
-# 7. Clean temporary FTP artifacts from interrupted uploads, then upload data.
+# 8. Clean temporary FTP artifacts from interrupted uploads, then upload data.
 mtbls submission clean-ftp-temp-files MTBLSxxx -o ftp_cleanup_response.json
 mtbls submission data-upload MTBLSxxx \
   --data-files-root-path ./MTBLSxxx/FILES \
   --skip-empty-folders tmp \
   -o data_upload_response.json
 
-# 8. Validate locally first, then remotely.
+# 9. Validate locally first, then remotely.
 mtbls submission validate MTBLSxxx \
   -p ./MTBLSxxx \
   --data-files-root-path ./MTBLSxxx/FILES \
@@ -129,6 +133,7 @@ mtbls submission validate MTBLSxxx \
 
 mtbls submission validate MTBLSxxx \
   --remote-validation \
+  --sync-data-files \
   --max-polls 180 \
   --poll-interval 10 \
   -o remote_validation_report.json
@@ -166,7 +171,7 @@ mtbls --version
 | --- | --- |
 | `mtbls auth` | Login and logout commands. |
 | `mtbls config` | Persistent runtime configuration commands. |
-| `mtbls submission` | Study creation, templates, upload, FTP, validation, and debugging commands. |
+| `mtbls submission` | Study creation, templates, download, upload, FTP, validation, and debugging commands. |
 | `mtbls submission templates` | Template download and sample input helpers. |
 
 ### 1. Authentication
@@ -179,20 +184,45 @@ Authenticate with MetaboLights.
 mtbls auth login --user user@example.org --password 'secret'
 ```
 
-Or store an existing submission API JWT token:
+Or sign in with an existing submission API JWT token:
 
 ```bash
 mtbls auth login --jwt-token "$MTBLS_JWT_TOKEN"
 ```
 
-Alternatively, you can pass `--jwt-token "$MTBLS_JWT_TOKEN"` directly to any `mtbls submission` command. This will authenticate the client, fetch the API token in the background, and seamlessly store both tokens for subsequent commands to use.
+You can also pass `--jwt-token "$MTBLS_JWT_TOKEN"` directly to a `mtbls submission` command to authenticate it.
 
 | Name | Required | Kind | Purpose |
 | --- | --- | --- | --- |
 | `--user`, `--username` | No | Option | MetaboLights username or email. If omitted, prompts interactively. |
 | `--password` | No | Option | MetaboLights password. If omitted, prompts interactively. |
 | `--jwt-token` | No | Option | Existing submission API JWT token. When provided, username and password are not required. |
-| `--base-url` | No | Option | API base URL for this login. Defaults to saved config or production. |
+| `--base-url` | No | Option | API base URL for this login. Defaults to `MTBLS_BASE_URL` or the saved/default server. |
+| `--refresh-token` | No | Option | Refresh token accompanying the JWT. Environment: `MTBLS_REFRESH_TOKEN`. |
+| `--issuer` | No | Option | OAuth realm URL; defaults to the selected server. Environment: `MTBLS_OIDC_ISSUER`. |
+| `--client-id` | No | Option | OAuth client ID; defaults to the JWT's authorized party or the legacy client. Environment: `MTBLS_OIDC_CLIENT_ID`. |
+| `--token-file` | No | Option | Reuse an existing MCP sign-in session. Environment: `MTBLS_TOKEN_FILE`. |
+| `--non-interactive` | No | Flag | Fail instead of prompting for missing credentials. Environment: `MTBLS_NON_INTERACTIVE=1`. |
+
+For a pipeline login, set `MTBLS_JWT_TOKEN` and `MTBLS_REFRESH_TOKEN` in the
+environment, then run:
+
+```bash
+mtbls auth login --base-url https://www.ebi.ac.uk/metabolights/ws --non-interactive
+```
+
+To reuse an MCP login instead:
+
+```bash
+mtbls auth login \
+  --base-url https://www.ebi.ac.uk/metabolights/ws \
+  --token-file /absolute/private/path/to/mcp-login.json \
+  --non-interactive
+```
+
+Access tokens refresh automatically when a valid refresh token is available.
+Expired or revoked sessions require another login. For later CI jobs, obtain
+fresh credentials or reuse a valid sign-in session.
 
 Example output:
 
@@ -203,15 +233,21 @@ Login successful.
 
 #### `mtbls auth logout`
 
-Clear the stored login session.
+Sign out of MetaboLights.
 
 ```bash
 mtbls auth logout
+mtbls auth logout --all
 ```
 
 | Name | Required | Kind | Purpose |
 | --- | --- | --- | --- |
 | `--base-url` | No | Option | API base URL whose stored session should be cleared. |
+| `--all` | No | Flag | Sign out of all known server sessions. Cannot be combined with `--base-url`. |
+
+Production, development, and locally registered servers are included. For an older
+custom server that has not been registered, use `--base-url` explicitly.
+Environment credentials and the MCP sign-in remain active independently.
 
 ### 2. Configuration
 
@@ -380,7 +416,68 @@ mtbls submission list -o studies.json
 | --- | --- | --- | --- |
 | `-o`, `--output` | No | Option | Save the studies list as JSON. |
 
-### 5. Metadata Upload
+### 5. Download Existing Study Files
+
+#### `mtbls submission download STUDY_ID metadata`
+
+Download metadata already stored for a study. This is useful immediately after study creation because the server-generated investigation contains the assigned accession and the study-creation details.
+
+Download only the investigation:
+
+```bash
+mtbls submission download MTBLSxxx metadata \
+  --files i_Investigation.txt \
+  --target-path ./MTBLSxxx
+```
+
+`--target-path` is a directory, not a destination filename. The example therefore creates `./MTBLSxxx/i_Investigation.txt`. Select several files with a comma-separated list, or omit `--files` to discover and download all ISA-Tab and result metadata referenced by the study:
+
+```bash
+mtbls submission download MTBLSxxx metadata \
+  --files i_Investigation.txt,s_MTBLSxxx.txt \
+  --target-path ./MTBLSxxx
+
+mtbls submission download MTBLSxxx metadata \
+  --target-path ./MTBLSxxx
+```
+
+Without `--target-path`, metadata is saved to `~/metabolights_data/submission/data/<study_id>`. The JSON response reports `downloaded_files`, `missing_files`, and `errors` separately.
+
+| Name | Required | Kind | Purpose |
+| --- | --- | --- | --- |
+| `STUDY_ID` | Yes | Argument | MetaboLights study accession. |
+| `--files` | No | Option | Comma-separated metadata filenames. Omit to download all discovered metadata. |
+| `-o`, `--output`, `--target-path` | No | Option | Destination directory. |
+| `--base-url` | No | Option | REST API base URL used to select credentials. |
+| `--jwt-token` | No | Option | Override the current JWT token. |
+
+#### `mtbls submission download STUDY_ID data`
+
+Download data files from the study's private FTP area. Data can be large, so the command requires either selected files or folders with `--files`, or an explicit `--all`.
+
+```bash
+mtbls submission download MTBLSxxx data \
+  --files raw/file1.raw,processed-results \
+  --target-path ./MTBLSxxx/FILES
+
+mtbls submission download MTBLSxxx data \
+  --all \
+  --target-path ./MTBLSxxx/FILES
+```
+
+Remote relative paths are preserved. Without `--target-path`, data is saved to `~/metabolights_data/submission/data/<study_id>/FILES`. `--files` and `--all` are mutually exclusive. Interactive terminals show progress on stderr; `--no-progress` disables it without changing the JSON result on stdout.
+
+| Name | Required | Kind | Purpose |
+| --- | --- | --- | --- |
+| `STUDY_ID` | Yes | Argument | MetaboLights study accession. |
+| `--files` | Conditional | Option | Comma-separated remote files or folders to download. |
+| `--all` | Conditional | Flag | Download all data files; use with care for large studies. |
+| `-o`, `--output`, `--target-path` | No | Option | Destination directory. |
+| `--progress`, `--no-progress` | No | Option | Show or disable interactive progress. Default: `--progress`. |
+| `--base-url` | No | Option | REST API base URL used to select credentials. |
+| `--jwt-token` | No | Option | Override the current JWT token. |
+
+### 6. Metadata Upload
 
 #### `mtbls submission metadata-upload STUDY_ID`
 
@@ -415,7 +512,7 @@ mtbls submission delete metadata MTBLSxxx --files i_Investigation.txt,s_MTBLSxxx
 | `--files` | Yes | Option | Comma-separated metadata filenames to delete. |
 | `--base-url` | No | Option | MetaboLights REST API base URL used to select credentials. |
 
-### 6. Data Preparation And Upload
+### 7. Data Preparation And Upload
 
 #### `mtbls submission compress-data-files STUDY_ID`
 
@@ -513,32 +610,33 @@ Example output:
 }
 ```
 
-#### `mtbls submission check-folders STUDY_ID`
+#### `mtbls submission check-folders`
 
 Check local metadata and data folders against MetaboLights submission prerequisites before upload. This command checks metadata filename formats, referenced metadata/data files, and local data file/folder standards. Use `mtbls submission validate` for ISA-Tab content completeness and rule validation.
 
 ```bash
-mtbls submission check-folders MTBLSxxx \
+mtbls submission check-folders \
+  --study-id MTBLSxxx \
   --metadata-files-path ./MTBLSxxx \
   --data-files-path ./MTBLSxxx/FILES
 ```
 
 | Name | Required | Kind | Purpose |
 | --- | --- | --- | --- |
-| `STUDY_ID` | Yes | Argument | MetaboLights accession, for example `MTBLSxxx`. |
-| `--default-submission-data-path` | No | Option | Parent folder for default metadata lookup. |
-| `-p`, `--metadata-files-path`, `--metadata-path` | No | Option | Local ISA-Tab metadata directory. Defaults to `<default-submission-data-path>/<study-id>`. |
+| `--study-id` | No | Option | Validate sample, assay, and MAF filenames against this accession. |
+| `-p`, `--metadata-files-path`, `--metadata-path` | No | Option | Local ISA-Tab metadata directory. Defaults to the current directory. |
 | `--data-files-path`, `--data-files-root-path` | No | Option | Local data `FILES` directory. Defaults to `<metadata-files-path>/FILES`. |
-| `-o`, `--output` | No | Option | Override the folder check report JSON path. Without this option, the report is saved under the default study cache folder. |
+| `-o`, `--output` | No | Option | Override the folder check report JSON path. Without this option, the report is saved under the local submission cache folder. |
 
-The report includes errors and warnings for metadata filename issues, missing required local metadata files, metadata/data file references, accepted data folder structure, compressed raw data folder requirements, and related file/folder standards. It prints a JSON report, saves it to `~/metabolights_data/submission/cache/<study_id>/<study_id>_folder_check_report.json` by default, lets you override the path with `-o` or `--output`, and exits with status code `1` when errors are found.
+The report includes errors and warnings for metadata filename issues, missing required local metadata files, metadata/data file references, accepted data folder structure, compressed raw data folder requirements, and related file/folder standards. It prints a JSON report, saves it as `~/metabolights_data/submission/cache/folder_check_report.json` by default, lets you override the path with `-o` or `--output`, and exits with status code `1` when errors are found. The accession is optional; without it the command runs structural and reference checks, while `--study-id` additionally validates sample, assay, and MAF filenames.
 
 Example submission folders are available under `examples/submission`. Use the valid folder to try a complete minimal study, or use the `invalid-*` folders to test validation and error handling scenarios.
 
 To try the valid example as-is:
 
 ```bash
-mtbls submission check-folders MTBLSXXX \
+mtbls submission check-folders \
+  --study-id MTBLSXXX \
   --metadata-files-path examples/submission/valid/MTBLSXXX \
   --data-files-path examples/submission/valid/MTBLSXXX/FILES \
   -o folder_check_report.json
@@ -553,7 +651,7 @@ To adapt the example for a real provisional study:
 5. Replace the example sample, assay, MAF, and data-file content with your own values.
 6. Run `mtbls submission check-folders` before uploading metadata or data.
 
-### 7. Validation
+### 8. Validation
 
 #### `mtbls submission validate STUDY_ID`
 
@@ -571,8 +669,10 @@ mtbls submission validate MTBLSxxx \
 Remote validation:
 
 ```bash
-mtbls submission validate MTBLSxxx --remote-validation -o remote_validation_report.json
+mtbls submission validate MTBLSxxx --remote-validation --sync-data-files -o remote_validation_report.json
 ```
+
+Both local and remote report JSON files include top-level `errorCount` and `warningCount` fields. The repeated validation `summary` section is omitted, while the detailed violations remain available for diagnosis.
 
 | Name | Required | Kind | Purpose |
 | --- | --- | --- | --- |
@@ -581,6 +681,7 @@ mtbls submission validate MTBLSxxx --remote-validation -o remote_validation_repo
 | `-p`, `--metadata-files-path`, `--metadata-path` | No | Option | Local ISA-Tab metadata directory. |
 | `--data-files-root-path` | Local only | Option | Local data root for local validation. Not required for `--remote-validation`. |
 | `--remote-validation` | No | Flag | Run validation through the remote submission API. |
+| `--sync-data-files` | Remote only | Flag | Index private FTP data files and wait for completion before validation. |
 | `--mtbls-validation-wasm-path` | No | Option | Local standalone WASM or OPA WASM validation bundle path. |
 | `--mtbls-validation-wasm-url` | No | Option | URL to download validation WASM when missing. |
 | `--mtbls-validation-endpoint` | No | Option | Validation API endpoint for remote validation. |

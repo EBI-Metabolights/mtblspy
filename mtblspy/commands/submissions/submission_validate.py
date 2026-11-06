@@ -3,6 +3,11 @@ from pathlib import Path
 
 import click
 
+from mtblspy.commands.submissions.cli_utils import (
+    create_submission_client,
+    get_submission_client,
+    jwt_token_option,
+)
 from mtblspy.commands.submissions.client import (
     DEFAULT_LOCAL_SUBMISSION_DATA_PATH,
     VALIDATION_MAX_POLLS,
@@ -15,7 +20,6 @@ from mtblspy.commands.submissions.local_validation import (
     LOCAL_VALIDATION_TIMEOUT_SECONDS,
     run_local_validation,
 )
-from mtblspy.commands.submissions.cli_utils import create_submission_client, get_submission_client, jwt_token_option
 
 
 @click.command(name="validate", short_help="Run study validation.")
@@ -46,6 +50,12 @@ from mtblspy.commands.submissions.cli_utils import create_submission_client, get
     help="Run validation through the remote submission API instead of local validation.",
 )
 @click.option(
+    "--sync-data-files",
+    is_flag=True,
+    default=False,
+    help="Index private FTP data files before remote validation and wait for completion.",
+)
+@click.option(
     "--mtbls-validation-wasm-path",
     type=click.Path(dir_okay=False),
     help=(
@@ -68,7 +78,9 @@ from mtblspy.commands.submissions.cli_utils import create_submission_client, get
     type=str,
     help="MetaboLights submission REST API endpoint for remote validation, overriding configured defaults.",
 )
-@click.option("--base-url", help="MetaboLights REST API base URL used to select credentials.")
+@click.option(
+    "--base-url", help="MetaboLights REST API base URL used to select credentials."
+)
 @click.option(
     "--validation-bundle-path",
     "--mtbls-validation-bundle-path",
@@ -110,14 +122,24 @@ from mtblspy.commands.submissions.cli_utils import create_submission_client, get
     type=click.Path(exists=True, dir_okay=False),
     help="Text file with validation rule identifiers or metadata filenames to ignore.",
 )
-@click.option("--max-polls", default=VALIDATION_MAX_POLLS, show_default=True, help="Maximum remote validation status checks.")
+@click.option(
+    "--max-polls",
+    default=VALIDATION_MAX_POLLS,
+    show_default=True,
+    help="Maximum remote validation status checks.",
+)
 @click.option(
     "--poll-interval",
     default=VALIDATION_POLL_INTERVAL_SECONDS,
     show_default=True,
     help="Seconds between remote validation status checks.",
 )
-@click.option("--timeout", default=LOCAL_VALIDATION_TIMEOUT_SECONDS, show_default=True, help="Local validation timeout in seconds.")
+@click.option(
+    "--timeout",
+    default=LOCAL_VALIDATION_TIMEOUT_SECONDS,
+    show_default=True,
+    help="Local validation timeout in seconds.",
+)
 @click.option(
     "--output",
     "--validation-file-path",
@@ -137,6 +159,7 @@ def validate_submission(
     metadata_files_path,
     data_files_root_path,
     remote_validation,
+    sync_data_files,
     mtbls_validation_wasm_path,
     mtbls_validation_wasm_url,
     mtbls_validation_endpoint,
@@ -172,8 +195,13 @@ def validate_submission(
                 max_polls,
                 poll_interval,
                 jwt_token,
+                sync_data_files,
             )
         else:
+            if sync_data_files:
+                raise click.ClickException(
+                    "--sync-data-files can only be used with --remote-validation."
+                )
             if not data_files_root_path:
                 raise click.ClickException(
                     "--data-files-root-path is required unless --remote-validation is used."
@@ -199,6 +227,10 @@ def validate_submission(
         raise click.ClickException(str(exc)) from exc
 
     report = load_json_report(result.report_path)
+    if not isinstance(report, dict):
+        raise click.ClickException(
+            f"Validation report did not contain a JSON object: {result.report_path}"
+        )
     report.setdefault("accession", normalized_study_id)
     click.echo(json.dumps(report, indent=2))
     click.echo(f"Validation report JSON saved to {result.report_path}")
@@ -214,6 +246,7 @@ def run_remote_validation(
     max_polls,
     poll_interval,
     jwt_token,
+    sync_data_files,
 ):
     client = get_submission_client(
         ctx,
@@ -224,6 +257,14 @@ def run_remote_validation(
     validation_endpoint = normalize_endpoint(mtbls_validation_endpoint)
     if validation_endpoint:
         client.submission_api_base_url = validation_endpoint
+    if sync_data_files:
+        click.echo(f"Indexing private FTP data files for {study_id.upper().strip()}...")
+        client.sync_private_ftp_data_files(
+            study_id,
+            max_polls=max_polls,
+            poll_interval=poll_interval,
+        )
+        click.echo("Data-file indexing completed successfully.")
     return client.validate_study(
         study_id,
         validation_file_path=output,

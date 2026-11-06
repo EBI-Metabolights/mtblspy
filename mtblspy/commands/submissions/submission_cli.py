@@ -1,13 +1,19 @@
 import click
 
 from mtblspy.commands.submissions.cli_utils import ensure_submission_context
-from mtblspy.commands.submissions.submission_compress_data_files import compress_data_files
 from mtblspy.commands.submissions.submission_check_folders import check_folders
-from mtblspy.commands.submissions.submission_clean_ftp_temp_files import clean_ftp_temp_files
+from mtblspy.commands.submissions.submission_clean_ftp_temp_files import (
+    clean_ftp_temp_files,
+)
+from mtblspy.commands.submissions.submission_compress_data_files import (
+    compress_data_files,
+)
 from mtblspy.commands.submissions.submission_create import create_submission
 from mtblspy.commands.submissions.submission_delete import delete_submission
 from mtblspy.commands.submissions.submission_download import download_submission
-from mtblspy.commands.submissions.submission_ftp_credentials import private_ftp_credentials
+from mtblspy.commands.submissions.submission_ftp_credentials import (
+    private_ftp_credentials,
+)
 from mtblspy.commands.submissions.submission_list import list_submissions
 from mtblspy.commands.submissions.submission_templates import submission_templates
 from mtblspy.commands.submissions.submission_upload_data import upload_data

@@ -3,11 +3,15 @@ import json
 import click
 
 from mtblspy.commands.output import save_json_output
+from mtblspy.commands.submissions.cli_utils import (
+    create_submission_client,
+    get_submission_client,
+    jwt_token_option,
+)
 from mtblspy.commands.submissions.client import (
     DEFAULT_LOCAL_SUBMISSION_CACHE_PATH,
     normalize_study_id,
 )
-from mtblspy.commands.submissions.cli_utils import create_submission_client, get_submission_client, jwt_token_option
 from mtblspy.commands.submissions.exceptions import SubmissionError
 
 
@@ -18,7 +22,9 @@ from mtblspy.commands.submissions.exceptions import SubmissionError
     type=str,
     help="MetaboLights REST API endpoint for FTP credentials, overriding configured defaults.",
 )
-@click.option("--base-url", help="MetaboLights REST API base URL used to select credentials.")
+@click.option(
+    "--base-url", help="MetaboLights REST API base URL used to select credentials."
+)
 @click.option(
     "--output",
     "-o",
@@ -27,16 +33,25 @@ from mtblspy.commands.submissions.exceptions import SubmissionError
 )
 @jwt_token_option
 @click.pass_context
-def clean_ftp_temp_files(ctx, study_id, mtbls_submission_endpoint, base_url, output, jwt_token):
+def clean_ftp_temp_files(
+    ctx, study_id, mtbls_submission_endpoint, base_url, output, jwt_token
+):
     """Delete incomplete .ftp_ temporary files from the study private FTP area."""
     normalized_study_id = normalize_study_id(study_id)
     normalized_endpoint = normalize_endpoint(mtbls_submission_endpoint or base_url)
 
     try:
-        client = get_submission_client(ctx, base_url=normalized_endpoint, jwt_token=jwt_token, factory=create_submission_client)
+        client = get_submission_client(
+            ctx,
+            base_url=normalized_endpoint,
+            jwt_token=jwt_token,
+            factory=create_submission_client,
+        )
         result = client.clear_ftp_temporary_files(study_id)
     except SubmissionError as exc:
-        resolved_endpoint = client.rest_api_base_url if "client" in locals() else normalized_endpoint
+        resolved_endpoint = (
+            client.rest_api_base_url if "client" in locals() else normalized_endpoint
+        )
         payload = build_clean_ftp_temp_files_payload(
             study_id=normalized_study_id,
             mtbls_submission_endpoint=resolved_endpoint,
@@ -46,11 +61,15 @@ def clean_ftp_temp_files(ctx, study_id, mtbls_submission_endpoint, base_url, out
             message=str(exc),
             errors=[str(exc)],
         )
-        save_clean_ftp_temp_files_output_if_requested(payload, output, normalized_study_id)
+        save_clean_ftp_temp_files_output_if_requested(
+            payload, output, normalized_study_id
+        )
         click.echo(json.dumps(payload, indent=2))
         raise click.exceptions.Exit(1) from exc
     except Exception as exc:
-        resolved_endpoint = client.rest_api_base_url if "client" in locals() else normalized_endpoint
+        resolved_endpoint = (
+            client.rest_api_base_url if "client" in locals() else normalized_endpoint
+        )
         payload = build_clean_ftp_temp_files_payload(
             study_id=normalized_study_id,
             mtbls_submission_endpoint=resolved_endpoint,
@@ -60,7 +79,9 @@ def clean_ftp_temp_files(ctx, study_id, mtbls_submission_endpoint, base_url, out
             message=str(exc),
             errors=[str(exc)],
         )
-        save_clean_ftp_temp_files_output_if_requested(payload, output, normalized_study_id)
+        save_clean_ftp_temp_files_output_if_requested(
+            payload, output, normalized_study_id
+        )
         click.echo(json.dumps(payload, indent=2))
         raise click.exceptions.Exit(1) from exc
 
@@ -80,7 +101,9 @@ def clean_ftp_temp_files(ctx, study_id, mtbls_submission_endpoint, base_url, out
 
 def build_clean_ftp_temp_files_message(result):
     if result.errors:
-        return "FTP temporary file cleanup completed with errors: " + "; ".join(result.errors)
+        return "FTP temporary file cleanup completed with errors: " + "; ".join(
+            result.errors
+        )
     return f"Deleted {len(result.deleted_files)} FTP temporary file(s) for {result.study_id}."
 
 

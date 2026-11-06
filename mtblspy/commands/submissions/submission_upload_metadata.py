@@ -4,13 +4,17 @@ from pathlib import Path
 import click
 
 from mtblspy.commands.output import save_json_output
+from mtblspy.commands.submissions.cli_utils import (
+    create_submission_client,
+    get_submission_client,
+    jwt_token_option,
+)
 from mtblspy.commands.submissions.client import (
     DEFAULT_LOCAL_SUBMISSION_CACHE_PATH,
     DEFAULT_LOCAL_SUBMISSION_DATA_PATH,
     normalize_study_id,
     parse_selected_metadata_files,
 )
-from mtblspy.commands.submissions.cli_utils import create_submission_client, get_submission_client, jwt_token_option
 from mtblspy.commands.submissions.exceptions import SubmissionError
 
 
@@ -35,7 +39,9 @@ from mtblspy.commands.submissions.exceptions import SubmissionError
     type=str,
     help="MetaboLights REST API endpoint for this upload, overriding configured defaults.",
 )
-@click.option("--base-url", help="MetaboLights REST API base URL used to select credentials.")
+@click.option(
+    "--base-url", help="MetaboLights REST API base URL used to select credentials."
+)
 @click.option(
     "--selected-files",
     type=str,
@@ -69,7 +75,12 @@ def upload_metadata(
     )
 
     try:
-        client = get_submission_client(ctx, base_url=normalized_endpoint, jwt_token=jwt_token, factory=create_submission_client)
+        client = get_submission_client(
+            ctx,
+            base_url=normalized_endpoint,
+            jwt_token=jwt_token,
+            factory=create_submission_client,
+        )
         result = client.upload_metadata(
             study_id,
             metadata_path=metadata_files_path,
@@ -77,7 +88,9 @@ def upload_metadata(
             default_submission_data_path=default_submission_data_path,
         )
     except SubmissionError as exc:
-        resolved_endpoint = client.rest_api_base_url if "client" in locals() else normalized_endpoint
+        resolved_endpoint = (
+            client.rest_api_base_url if "client" in locals() else normalized_endpoint
+        )
         payload = write_failure_output(
             study_id=normalized_study_id,
             default_submission_data_path=default_submission_data_path,
@@ -91,7 +104,9 @@ def upload_metadata(
         click.echo(json.dumps(payload, indent=2))
         raise click.exceptions.Exit(1) from exc
     except Exception as exc:
-        resolved_endpoint = client.rest_api_base_url if "client" in locals() else normalized_endpoint
+        resolved_endpoint = (
+            client.rest_api_base_url if "client" in locals() else normalized_endpoint
+        )
         payload = write_failure_output(
             study_id=normalized_study_id,
             default_submission_data_path=default_submission_data_path,
@@ -154,7 +169,10 @@ def build_upload_metadata_payload(
     return {
         "parameters": [
             {"name": "study_id", "value": study_id},
-            {"name": "default_submission_data_path", "value": str(default_submission_data_path)},
+            {
+                "name": "default_submission_data_path",
+                "value": str(default_submission_data_path),
+            },
             {"name": "metadata_files_path", "value": str(metadata_files_path)},
             {"name": "mtbls_submission_endpoint", "value": mtbls_submission_endpoint},
             {"name": "selected_files", "value": selected_files},

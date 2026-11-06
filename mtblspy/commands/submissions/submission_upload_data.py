@@ -4,12 +4,16 @@ import click
 from tqdm import tqdm
 
 from mtblspy.commands.output import save_json_output
+from mtblspy.commands.submissions.cli_utils import (
+    create_submission_client,
+    get_submission_client,
+    jwt_token_option,
+)
 from mtblspy.commands.submissions.client import (
     DEFAULT_LOCAL_SUBMISSION_CACHE_PATH,
     normalize_study_id,
     parse_comma_separated_values,
 )
-from mtblspy.commands.submissions.cli_utils import create_submission_client, get_submission_client, jwt_token_option
 from mtblspy.commands.submissions.exceptions import SubmissionError
 
 
@@ -41,7 +45,9 @@ from mtblspy.commands.submissions.exceptions import SubmissionError
     type=str,
     help="MetaboLights REST API endpoint for this upload, overriding configured defaults.",
 )
-@click.option("--base-url", help="MetaboLights REST API base URL used to select credentials.")
+@click.option(
+    "--base-url", help="MetaboLights REST API base URL used to select credentials."
+)
 @click.option(
     "--output",
     "-o",
@@ -75,10 +81,17 @@ def upload_data(
     selected_file_names = parse_comma_separated_values(selected_files)
     skip_uploaded_file_names = parse_comma_separated_values(skip_uploaded_files)
     skip_empty_folder_names = parse_comma_separated_values(skip_empty_folders)
-    progress_bar = DataUploadProgress(enabled=progress and is_progress_stream_interactive())
+    progress_bar = DataUploadProgress(
+        enabled=progress and is_progress_stream_interactive()
+    )
 
     try:
-        client = get_submission_client(ctx, base_url=normalized_endpoint, jwt_token=jwt_token, factory=create_submission_client)
+        client = get_submission_client(
+            ctx,
+            base_url=normalized_endpoint,
+            jwt_token=jwt_token,
+            factory=create_submission_client,
+        )
         upload_kwargs = {
             "data_files_root_path": data_files_root_path,
             "selected_files": selected_file_names,
@@ -89,7 +102,9 @@ def upload_data(
             upload_kwargs["progress_callback"] = progress_bar.callback
         result = client.upload_data_files(study_id, **upload_kwargs)
     except SubmissionError as exc:
-        resolved_endpoint = client.rest_api_base_url if "client" in locals() else normalized_endpoint
+        resolved_endpoint = (
+            client.rest_api_base_url if "client" in locals() else normalized_endpoint
+        )
         payload = write_failure_output(
             study_id=normalized_study_id,
             data_files_root_path=data_files_root_path,
@@ -105,7 +120,9 @@ def upload_data(
         click.echo(json.dumps(payload, indent=2))
         raise click.exceptions.Exit(1) from exc
     except Exception as exc:
-        resolved_endpoint = client.rest_api_base_url if "client" in locals() else normalized_endpoint
+        resolved_endpoint = (
+            client.rest_api_base_url if "client" in locals() else normalized_endpoint
+        )
         payload = write_failure_output(
             study_id=normalized_study_id,
             data_files_root_path=data_files_root_path,
@@ -287,7 +304,9 @@ class DataUploadProgress:
             self.start(0)
         if self.progress_bar.disable:
             return
-        self.progress_bar.set_postfix_str(format_progress_item(path, status), refresh=False)
+        self.progress_bar.set_postfix_str(
+            format_progress_item(path, status), refresh=False
+        )
         self.progress_bar.update(1)
 
     def close(self):

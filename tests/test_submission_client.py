@@ -1,8 +1,8 @@
 import json
 import posixpath
 import time
-from ftplib import error_perm
 from base64 import urlsafe_b64encode
+from ftplib import error_perm
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -11,38 +11,41 @@ from mtblspy.commands.submissions.client import (
     SubmissionClient,
     enrich_validation_errors_with_isa_json,
     format_validation_error,
-    get_validation_errors,
-    get_validation_result,
     get_keycloak_token_url,
     get_studies_from_user_response,
+    get_validation_errors,
+    get_validation_result,
+    get_validation_warnings,
     resolve_data_download_target_path,
     resolve_download_target_path,
     save_isa_json,
     save_sample_study_input,
     save_validation_report,
 )
-from mtblspy.commands.submissions.exceptions import AuthenticationError, SubmissionAPIError
+from mtblspy.commands.submissions.exceptions import (
+    AuthenticationError,
+    SubmissionAPIError,
+)
 from mtblspy.commands.submissions.models import StudyInputFormat
+from mtblspy.config import get_credential_base_url, get_credential_store
 
 
 def make_jwt(payload):
     def encode(data):
-        return urlsafe_b64encode(json.dumps(data).encode("utf-8")).decode("ascii").rstrip("=")
+        return (
+            urlsafe_b64encode(json.dumps(data).encode("utf-8"))
+            .decode("ascii")
+            .rstrip("=")
+        )
 
     return f"{encode({'alg': 'none'})}.{encode(payload)}."
 
 
-@patch("mtblspy.commands.submissions.client.save_refresh_token")
-@patch("mtblspy.commands.submissions.client.save_jwt_token")
-@patch("mtblspy.commands.submissions.client.save_config")
 @patch("mtblspy.commands.submissions.client.requests.post")
 @patch("mtblspy.commands.submissions.client.get_base_url")
 def test_login_fetches_api_token_jwt_and_refresh_token(
     mock_get_base_url,
     mock_post,
-    mock_save_config,
-    mock_save_jwt_token,
-    mock_save_refresh_token,
 ):
     mock_get_base_url.return_value = "https://wwwdev.ebi.ac.uk/metabolights/ws"
     login_response = MagicMock()
@@ -60,7 +63,10 @@ def test_login_fetches_api_token_jwt_and_refresh_token(
 
     SubmissionClient().login("user@example.org", "password")
 
-    assert mock_post.call_args_list[0].args[0] == "https://wwwdev.ebi.ac.uk/metabolights/ws/auth/login"
+    assert (
+        mock_post.call_args_list[0].args[0]
+        == "https://wwwdev.ebi.ac.uk/metabolights/ws/auth/login"
+    )
     assert mock_post.call_args_list[0].kwargs["headers"] == {
         "accept": "application/json",
         "Content-Type": "application/json",
@@ -69,34 +75,30 @@ def test_login_fetches_api_token_jwt_and_refresh_token(
         "email": "user@example.org",
         "secret": "password",
     }
-    assert mock_post.call_args_list[1].args[0] == "https://wwwdev.ebi.ac.uk/metabolights/ws3/auth/v1/token"
+    assert (
+        mock_post.call_args_list[1].args[0]
+        == "https://wwwdev.ebi.ac.uk/metabolights/ws3/auth/v1/token"
+    )
     assert mock_post.call_args_list[1].kwargs["data"] == {
         "grant_type": "password",
         "username": "user@example.org",
         "password": "password",
         "client_id": "swagger-ui-test",
     }
-    mock_save_config.assert_called_once_with(
-        api_key="valid-key",
-        base_url="https://wwwdev.ebi.ac.uk/metabolights/ws",
-        user_name="user@example.org",
-        credential_base_url=None,
+    store = get_credential_store(
+        get_credential_base_url("https://wwwdev.ebi.ac.uk/metabolights/ws")
     )
-    mock_save_jwt_token.assert_called_once_with(
-        "https://wwwdev.ebi.ac.uk/metabolights/ws3",
-        "jwt-token",
-        credential_base_url=None,
+    assert store.get_user_name() == "user@example.org"
+    assert (
+        store.get_jwt_token("https://wwwdev.ebi.ac.uk/metabolights/ws") == "jwt-token"
     )
-    mock_save_refresh_token.assert_called_once_with(
-        "https://wwwdev.ebi.ac.uk/metabolights/ws3",
-        "refresh-token",
-        credential_base_url=None,
+    assert (
+        store.get_refresh_token("https://wwwdev.ebi.ac.uk/metabolights/ws")
+        == "refresh-token"
     )
+    assert store.get_api_token() == "valid-key"
 
 
-@patch("mtblspy.commands.submissions.client.save_refresh_token")
-@patch("mtblspy.commands.submissions.client.save_jwt_token")
-@patch("mtblspy.commands.submissions.client.save_config")
 @patch("mtblspy.commands.submissions.client.requests.get")
 @patch("mtblspy.commands.submissions.client.requests.post")
 @patch("mtblspy.commands.submissions.client.get_base_url")
@@ -104,9 +106,6 @@ def test_login_fetches_api_token_from_accounts_when_login_token_empty(
     mock_get_base_url,
     mock_post,
     mock_get,
-    mock_save_config,
-    mock_save_jwt_token,
-    mock_save_refresh_token,
 ):
     mock_get_base_url.return_value = "https://www.ebi.ac.uk/metabolights/ws"
     login_response = MagicMock()
@@ -136,61 +135,48 @@ def test_login_fetches_api_token_from_accounts_when_login_token_empty(
 
     SubmissionClient().login("user@example.org", "password")
 
-    assert mock_get.call_args.args[0] == "https://www.ebi.ac.uk/metabolights/ws/auth/accounts"
+    assert (
+        mock_get.call_args.args[0]
+        == "https://www.ebi.ac.uk/metabolights/ws/auth/accounts"
+    )
     assert mock_get.call_args.kwargs["headers"] == {
         "accept": "application/json",
         "Authorization": "Bearer jwt-token",
     }
-    mock_save_config.assert_called_once_with(
-        api_key="valid-key",
-        base_url="https://www.ebi.ac.uk/metabolights/ws",
-        user_name="user@example.org",
-        credential_base_url="https://www.ebi.ac.uk/metabolights/ws",
+    store = get_credential_store(
+        get_credential_base_url("https://www.ebi.ac.uk/metabolights/ws")
     )
-    mock_save_jwt_token.assert_called_once_with(
-        "https://www.ebi.ac.uk/metabolights/ws3",
-        "jwt-token",
-        credential_base_url="https://www.ebi.ac.uk/metabolights/ws",
+    assert store.get_user_name() == "user@example.org"
+    assert store.get_jwt_token("https://www.ebi.ac.uk/metabolights/ws") == "jwt-token"
+    assert (
+        store.get_refresh_token("https://www.ebi.ac.uk/metabolights/ws")
+        == "refresh-token"
     )
-    mock_save_refresh_token.assert_called_once_with(
-        "https://www.ebi.ac.uk/metabolights/ws3",
-        "refresh-token",
-        credential_base_url="https://www.ebi.ac.uk/metabolights/ws",
-    )
+    assert store.get_api_token() == "valid-key"
 
 
-@patch("mtblspy.commands.submissions.client.save_jwt_token")
-@patch("mtblspy.commands.submissions.client.save_config")
 @patch("mtblspy.commands.submissions.client.get_base_url")
 def test_login_with_jwt_stores_token_and_claim_user(
     mock_get_base_url,
-    mock_save_config,
-    mock_save_jwt_token,
 ):
     mock_get_base_url.return_value = "https://wwwdev.ebi.ac.uk/metabolights/ws"
     jwt_token = make_jwt({"email": "user@example.org", "exp": time.time() + 3600})
 
     SubmissionClient().login_with_jwt(f"Bearer {jwt_token}")
 
-    mock_save_config.assert_called_once_with(
-        base_url="https://wwwdev.ebi.ac.uk/metabolights/ws",
-        user_name="user@example.org",
-        credential_base_url=None,
+    store = get_credential_store(
+        get_credential_base_url("https://wwwdev.ebi.ac.uk/metabolights/ws")
     )
-    mock_save_jwt_token.assert_called_once_with(
-        "https://wwwdev.ebi.ac.uk/metabolights/ws3",
-        jwt_token,
-        credential_base_url=None,
-    )
+    assert store.get_user_name() == "user@example.org"
+    assert store.get_jwt_token("https://wwwdev.ebi.ac.uk/metabolights/ws") == jwt_token
+    assert store.get_refresh_token("https://wwwdev.ebi.ac.uk/metabolights/ws") is None
+    assert store.get_api_token() is None
 
 
-@patch("mtblspy.commands.submissions.client.save_jwt_token")
-@patch("mtblspy.commands.submissions.client.save_config")
 @patch("mtblspy.commands.submissions.client.get_base_url")
 def test_login_with_jwt_rejects_expired_token(
     mock_get_base_url,
-    mock_save_config,
-    mock_save_jwt_token,
+    isolated_credentials,
 ):
     mock_get_base_url.return_value = "https://www.ebi.ac.uk/metabolights/ws"
     jwt_token = make_jwt({"email": "user@example.org", "exp": time.time() - 3600})
@@ -198,8 +184,7 @@ def test_login_with_jwt_rejects_expired_token(
     with pytest.raises(AuthenticationError, match="JWT token is expired"):
         SubmissionClient().login_with_jwt(jwt_token)
 
-    mock_save_config.assert_not_called()
-    mock_save_jwt_token.assert_not_called()
+    assert not isolated_credentials
 
 
 @patch("mtblspy.commands.submissions.client.requests.post")
@@ -321,7 +306,9 @@ def test_create_study_raises_api_error_with_text_response_details(
     with pytest.raises(SubmissionAPIError) as exc_info:
         SubmissionClient().create_study(input_file, StudyInputFormat.JSON)
 
-    assert str(exc_info.value) == "Study creation failed: HTTP 500 Internal Server Error"
+    assert (
+        str(exc_info.value) == "Study creation failed: HTTP 500 Internal Server Error"
+    )
     assert exc_info.value.errors == ["Unexpected study creation failure"]
 
 
@@ -330,7 +317,10 @@ def test_get_studies_from_user_response_supports_known_response_shapes():
 
     assert get_studies_from_user_response({"content": expected}) == expected
     assert get_studies_from_user_response({"data": expected}) == expected
-    assert get_studies_from_user_response({"studies": {"MTBLS123": expected[0]}}) == expected
+    assert (
+        get_studies_from_user_response({"studies": {"MTBLS123": expected[0]}})
+        == expected
+    )
     assert get_studies_from_user_response(expected) == expected
 
 
@@ -345,15 +335,21 @@ def test_save_sample_study_input_writes_default_json(tmp_path):
     assert data["selectedStudyCategories"] == {"ms-mhd-legacy": ["MS"]}
     assert data["relatedDatasets"][0]["repository"] == "MetaboLights"
     assert data["funding"][0]["grantIdentifier"] == "EXAMPLE-GRANT-001"
-    assert data["contacts"][0]["roles"][0]["annotationValue"] == "Principal Investigator"
+    assert (
+        data["contacts"][0]["roles"][0]["annotationValue"] == "Principal Investigator"
+    )
     assert data["designDescriptors"][0]["annotationValue"] == "metabolite profiling"
     assert data["factors"] == []
     assert data["assays"] == []
     assert data["selectedSubmissionWorkflows"] == []
 
 
-def test_save_sample_study_input_defaults_to_local_submission_data_folder(tmp_path, monkeypatch):
-    monkeypatch.setattr("mtblspy.commands.submissions.client.DEFAULT_STUDY_INPUT_DATA_FOLDER", tmp_path)
+def test_save_sample_study_input_defaults_to_local_submission_data_folder(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(
+        "mtblspy.commands.submissions.client.DEFAULT_STUDY_INPUT_DATA_FOLDER", tmp_path
+    )
 
     output_path = save_sample_study_input()
 
@@ -361,8 +357,12 @@ def test_save_sample_study_input_defaults_to_local_submission_data_folder(tmp_pa
     assert output_path.exists()
 
 
-def test_save_sample_study_input_uses_filename_in_current_directory(tmp_path, monkeypatch):
-    monkeypatch.setattr("mtblspy.commands.submissions.client.DEFAULT_STUDY_INPUT_DATA_FOLDER", tmp_path)
+def test_save_sample_study_input_uses_filename_in_current_directory(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(
+        "mtblspy.commands.submissions.client.DEFAULT_STUDY_INPUT_DATA_FOLDER", tmp_path
+    )
     monkeypatch.chdir(tmp_path)
 
     output_path = save_sample_study_input(output_path="custom_input.json")
@@ -371,8 +371,13 @@ def test_save_sample_study_input_uses_filename_in_current_directory(tmp_path, mo
     assert output_path.exists()
 
 
-def test_json_download_helpers_use_current_directory_for_filenames(tmp_path, monkeypatch):
-    monkeypatch.setattr("mtblspy.commands.submissions.client.DEFAULT_LOCAL_SUBMISSION_CACHE_PATH", tmp_path)
+def test_json_download_helpers_use_current_directory_for_filenames(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(
+        "mtblspy.commands.submissions.client.DEFAULT_LOCAL_SUBMISSION_CACHE_PATH",
+        tmp_path,
+    )
     monkeypatch.chdir(tmp_path)
 
     validation_path = save_validation_report(
@@ -380,14 +385,19 @@ def test_json_download_helpers_use_current_directory_for_filenames(tmp_path, mon
         {"messages": {"summary": [], "violations": []}},
         validation_file_path="validation.json",
     )
-    isa_json_path = save_isa_json("MTBLS123", {"study": {"identifier": "MTBLS123"}}, "isa.json")
+    isa_json_path = save_isa_json(
+        "MTBLS123", {"study": {"identifier": "MTBLS123"}}, "isa.json"
+    )
 
     assert validation_path == tmp_path / "validation.json"
     assert isa_json_path == tmp_path / "isa.json"
 
 
 def test_json_download_helpers_keep_explicit_paths(tmp_path, monkeypatch):
-    monkeypatch.setattr("mtblspy.commands.submissions.client.DEFAULT_LOCAL_SUBMISSION_CACHE_PATH", tmp_path / "cache")
+    monkeypatch.setattr(
+        "mtblspy.commands.submissions.client.DEFAULT_LOCAL_SUBMISSION_CACHE_PATH",
+        tmp_path / "cache",
+    )
     report_path = tmp_path / "reports" / "validation.json"
 
     output_path = save_validation_report(
@@ -400,11 +410,19 @@ def test_json_download_helpers_keep_explicit_paths(tmp_path, monkeypatch):
     assert output_path.exists()
 
 
-def test_download_target_paths_default_to_local_submission_data_path(tmp_path, monkeypatch):
-    monkeypatch.setattr("mtblspy.commands.submissions.client.DEFAULT_LOCAL_SUBMISSION_DATA_PATH", tmp_path)
+def test_download_target_paths_default_to_local_submission_data_path(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(
+        "mtblspy.commands.submissions.client.DEFAULT_LOCAL_SUBMISSION_DATA_PATH",
+        tmp_path,
+    )
 
     assert resolve_download_target_path(None, "MTBLS123") == tmp_path / "MTBLS123"
-    assert resolve_data_download_target_path(None, "MTBLS123") == tmp_path / "MTBLS123" / "FILES"
+    assert (
+        resolve_data_download_target_path(None, "MTBLS123")
+        == tmp_path / "MTBLS123" / "FILES"
+    )
 
 
 @patch("mtblspy.commands.submissions.client.get_refresh_token")
@@ -419,7 +437,9 @@ def test_get_auth_headers_uses_stored_jwt_when_api_token_missing(
 ):
     mock_get_base_url.return_value = "https://wwwdev.ebi.ac.uk/metabolights/ws"
     mock_get_api_key.return_value = None
-    mock_get_jwt_token.return_value = make_jwt({"email": "user@example.org", "exp": time.time() + 3600})
+    mock_get_jwt_token.return_value = make_jwt(
+        {"email": "user@example.org", "exp": time.time() + 3600}
+    )
     mock_get_refresh_token.return_value = None
 
     headers = SubmissionClient().get_auth_headers()
@@ -487,8 +507,14 @@ def test_upload_metadata_uploads_isatab_metadata_files(
         "s_MTBLS123.txt",
     ]
     assert mock_post.call_count == 2
-    first_url, first_kwargs = mock_post.call_args_list[0].args[0], mock_post.call_args_list[0].kwargs
-    assert first_url == "https://wwwdev.ebi.ac.uk/metabolights/ws/studies/MTBLS123/drag-drop-upload"
+    first_url, first_kwargs = (
+        mock_post.call_args_list[0].args[0],
+        mock_post.call_args_list[0].kwargs,
+    )
+    assert (
+        first_url
+        == "https://wwwdev.ebi.ac.uk/metabolights/ws/studies/MTBLS123/drag-drop-upload"
+    )
     assert first_kwargs["headers"] == {"user-token": "valid-key"}
     assert first_kwargs["files"]["file"][0] == "i_Investigation.txt"
 
@@ -522,7 +548,10 @@ def test_get_submission_headers_exchanges_and_saves_jwt(
 
     headers = SubmissionClient().get_submission_headers()
 
-    assert headers == {"accept": "application/json", "Authorization": "Bearer jwt-token"}
+    assert headers == {
+        "accept": "application/json",
+        "Authorization": "Bearer jwt-token",
+    }
     mock_save_jwt_token.assert_called_once_with(
         "https://wwwdev.ebi.ac.uk/metabolights/ws3",
         "jwt-token",
@@ -534,7 +563,11 @@ def test_get_submission_headers_exchanges_and_saves_jwt(
             "accept": "application/json",
             "Content-Type": "application/x-www-form-urlencoded",
         },
-        data={"grant_type": "password", "username": "user@example.org", "client_secret": "valid-key"},
+        data={
+            "grant_type": "password",
+            "username": "user@example.org",
+            "client_secret": "valid-key",
+        },
         timeout=30,
     )
 
@@ -600,13 +633,19 @@ def test_get_submission_headers_falls_back_to_keycloak_when_ws3_auth_fails(
     keycloak_response = MagicMock()
     keycloak_response.status_code = 200
     keycloak_response.headers = {}
-    keycloak_response.json.return_value = {"access_token": "jwt-token", "token_type": "bearer"}
+    keycloak_response.json.return_value = {
+        "access_token": "jwt-token",
+        "token_type": "bearer",
+    }
 
     mock_post.side_effect = [ws3_bug_response, keycloak_response]
 
     headers = SubmissionClient().get_submission_headers()
 
-    assert headers == {"accept": "application/json", "Authorization": "Bearer jwt-token"}
+    assert headers == {
+        "accept": "application/json",
+        "Authorization": "Bearer jwt-token",
+    }
     assert mock_post.call_args_list[1].args[0] == (
         "https://wwwdev.ebi.ac.uk/metabolights/test/iam/realms/metabolights/protocol/openid-connect/token"
     )
@@ -650,7 +689,10 @@ def test_get_submission_headers_refreshes_with_stored_refresh_token(
 
     headers = SubmissionClient().get_submission_headers()
 
-    assert headers == {"accept": "application/json", "Authorization": "Bearer fresh-jwt-token"}
+    assert headers == {
+        "accept": "application/json",
+        "Authorization": "Bearer fresh-jwt-token",
+    }
     mock_post.assert_called_once_with(
         "https://wwwdev.ebi.ac.uk/metabolights/ws3/auth/v1/refresh",
         headers={
@@ -783,17 +825,128 @@ def test_validate_study_retries_transient_task_not_found_and_saves_report(
 
     assert result.errors == []
     assert json.loads(report_path.read_text(encoding="utf-8")) == {
-        "messages": {"summary": [], "violations": []},
+        "messages": {"violations": []},
         "accession": "MTBLS123",
+        "errorCount": 0,
+        "warningCount": 0,
     }
     mock_sleep.assert_called_once_with(5)
-    validation_headers = {"accept": "application/json", "Authorization": "Bearer jwt-token"}
+    validation_headers = {
+        "accept": "application/json",
+        "Authorization": "Bearer jwt-token",
+    }
     task_headers = {**validation_headers, "Task-Id": "validation-task-1"}
     mock_get.assert_any_call(
         "https://wwwdev.ebi.ac.uk/metabolights/ws3/submissions/v2/validations/MTBLS123/validation-task-1",
         headers=task_headers,
         timeout=30,
     )
+
+
+@patch("mtblspy.commands.submissions.client.time.sleep")
+@patch("mtblspy.commands.submissions.client.requests.get")
+@patch("mtblspy.commands.submissions.client.requests.post")
+@patch("mtblspy.commands.submissions.client.get_jwt_token")
+@patch("mtblspy.commands.submissions.client.get_base_url")
+def test_validate_study_waits_when_success_status_has_no_task_result(
+    mock_get_base_url,
+    mock_get_jwt_token,
+    mock_post,
+    mock_get,
+    mock_sleep,
+    tmp_path,
+):
+    mock_get_base_url.return_value = "https://wwwdev.ebi.ac.uk/metabolights/ws"
+    mock_get_jwt_token.return_value = "jwt-token"
+    validation_start_response = MagicMock()
+    validation_start_response.json.return_value = {
+        "status": "success",
+        "content": {
+            "task": {
+                "taskId": "validation-task-1",
+                "taskStatus": "SUCCESS",
+                "ready": True,
+                "isSuccessful": True,
+            },
+            "taskResult": None,
+        },
+    }
+    validation_result_response = MagicMock()
+    validation_result_response.json.return_value = {
+        "status": "success",
+        "content": {
+            "task": {
+                "taskId": "validation-task-1",
+                "taskStatus": "SUCCESS",
+                "ready": True,
+                "isSuccessful": True,
+            },
+            "taskResult": {"messages": {"summary": [], "violations": []}},
+        },
+    }
+    mock_post.return_value = validation_start_response
+    mock_get.return_value = validation_result_response
+    report_path = tmp_path / "validation-report.json"
+
+    result = SubmissionClient(api_token="valid-key").validate_study(
+        "MTBLS123", validation_file_path=report_path
+    )
+
+    assert result.errors == []
+    assert json.loads(report_path.read_text(encoding="utf-8")) == {
+        "messages": {"violations": []},
+        "accession": "MTBLS123",
+        "errorCount": 0,
+        "warningCount": 0,
+    }
+    mock_get.assert_called_once()
+    mock_sleep.assert_not_called()
+
+
+@patch("mtblspy.commands.submissions.client.time.sleep")
+@patch("mtblspy.commands.submissions.client.requests.get")
+@patch("mtblspy.commands.submissions.client.requests.post")
+@patch("mtblspy.commands.submissions.client.get_base_url")
+def test_sync_private_ftp_data_files_waits_for_success(
+    mock_get_base_url, mock_post, mock_get, mock_sleep
+):
+    mock_get_base_url.return_value = "https://wwwdev.ebi.ac.uk/metabolights/ws"
+    start_response = MagicMock()
+    start_response.json.return_value = {"task_id": "sync-task-1"}
+    mock_post.return_value = start_response
+
+    running_response = MagicMock()
+    running_response.json.return_value = {
+        "task_id": "sync-task-1",
+        "status": "RUNNING",
+    }
+    success_response = MagicMock()
+    success_response.json.return_value = {
+        "task_id": "sync-task-1",
+        "status": "SUCCESS",
+    }
+    mock_get.side_effect = [running_response, success_response]
+
+    result = SubmissionClient(api_token="valid-key").sync_private_ftp_data_files(
+        "mtbls123", max_polls=2, poll_interval=3
+    )
+
+    assert result["status"] == "SUCCESS"
+    sync_url = (
+        "https://wwwdev.ebi.ac.uk/metabolights/ws/studies/MTBLS123/"
+        "study-folders/rsync-task"
+    )
+    expected_headers = {
+        "user-token": "valid-key",
+        "Dry-Run": "false",
+        "Sync-Type": "data",
+        "Source-Staging-Area": "private-ftp",
+        "Target-Staging-Area": "readonly-study",
+    }
+    mock_post.assert_called_once_with(sync_url, headers=expected_headers, timeout=30)
+    assert mock_get.call_count == 2
+    mock_get.assert_called_with(sync_url, headers=expected_headers, timeout=30)
+    mock_sleep.assert_called_once_with(3)
 
 
 @patch("mtblspy.commands.submissions.client.save_jwt_token")
@@ -822,7 +975,10 @@ def test_validate_study_refreshes_jwt_after_unauthorized_start(
     login_response = MagicMock()
     login_response.status_code = 200
     login_response.headers = {}
-    login_response.json.return_value = {"access_token": "fresh-jwt-token", "token_type": "bearer"}
+    login_response.json.return_value = {
+        "access_token": "fresh-jwt-token",
+        "token_type": "bearer",
+    }
 
     validation_start_response = MagicMock()
     validation_start_response.status_code = 200
@@ -860,7 +1016,10 @@ def test_validate_study_refreshes_jwt_after_unauthorized_start(
         "accept": "application/json",
         "Authorization": "Bearer stale-jwt-token",
     }
-    assert mock_post.call_args_list[1].args[0] == "https://wwwdev.ebi.ac.uk/metabolights/ws3/auth/v1/token"
+    assert (
+        mock_post.call_args_list[1].args[0]
+        == "https://wwwdev.ebi.ac.uk/metabolights/ws3/auth/v1/token"
+    )
     assert mock_post.call_args_list[1].kwargs["data"] == {
         "grant_type": "password",
         "username": "user@example.org",
@@ -981,7 +1140,9 @@ def test_validation_result_extracts_v2_policy_root_causes():
     }
 
     errors = get_validation_errors(report)
-    validation_result = get_validation_result("mtbls123", report, include_root_causes=True)
+    validation_result = get_validation_result(
+        "mtbls123", report, include_root_causes=True
+    )
 
     assert format_validation_error(errors[0]) == (
         "Assay: Raw data file 'missing.raw' is referenced but was not found. | "
@@ -1003,6 +1164,44 @@ def test_validation_result_extracts_v2_policy_root_causes():
     ]
 
 
+def test_validation_result_adds_counts_and_removes_summary():
+    report = {
+        "content": {
+            "taskResult": {
+                "status": "FAILED",
+                "messages": {
+                    "status": "WARNING",
+                    "summary": [{"type": "WARNING", "title": "Duplicate"}],
+                    "violations": [
+                        {
+                            "type": "ERROR",
+                            "title": "Invalid assay group",
+                            "details": [{"type": "ERROR", "title": "Invalid assay"}],
+                        },
+                        {
+                            "type": "WARNING",
+                            "title": "Metadata recommendations",
+                            "details": [
+                                {
+                                    "type": "WARNING",
+                                    "title": "Recommended metadata",
+                                }
+                            ],
+                        },
+                    ],
+                },
+            }
+        }
+    }
+
+    validation_result = get_validation_result("MTBLS123", report)
+
+    assert validation_result["errorCount"] == 1
+    assert validation_result["warningCount"] == 1
+    assert "summary" not in validation_result["messages"]
+    assert len(get_validation_warnings(report)) == 3
+
+
 @patch("mtblspy.commands.submissions.client.requests.get")
 @patch("mtblspy.commands.submissions.client.requests.post")
 @patch("mtblspy.commands.submissions.client.get_jwt_token")
@@ -1021,7 +1220,9 @@ def test_validate_study_fetches_isa_json_and_posts_it_to_validation_api(
             "studies": [
                 {
                     "title": "Metadata Test Study",
-                    "studyDesignDescriptors": [{"annotationValue": "metabolite profiling"}],
+                    "studyDesignDescriptors": [
+                        {"annotationValue": "metabolite profiling"}
+                    ],
                 }
             ]
         }
@@ -1059,7 +1260,10 @@ def test_validate_study_fetches_isa_json_and_posts_it_to_validation_api(
         timeout=30,
     )
     mock_post.assert_called_once()
-    assert mock_post.call_args.args[0] == "https://wwwdev.ebi.ac.uk/metabolights/ws3/submissions/v2/validations/MTBLS123"
+    assert (
+        mock_post.call_args.args[0]
+        == "https://wwwdev.ebi.ac.uk/metabolights/ws3/submissions/v2/validations/MTBLS123"
+    )
     assert mock_post.call_args.kwargs["json"] == isa_json
 
 
@@ -1246,7 +1450,9 @@ def test_validate_study_timeout_shows_last_task_state(
             poll_interval=0,
         )
 
-    assert "Validation task for MTBLS123 did not complete in time" in str(exc_info.value)
+    assert "Validation task for MTBLS123 did not complete in time" in str(
+        exc_info.value
+    )
     assert "status=STARTED" in str(exc_info.value)
     assert "message=Validation is still running" in str(exc_info.value)
     assert mock_sleep.call_count == 2
@@ -1266,12 +1472,15 @@ def test_upload_metadata_defaults_to_local_submission_data_folder(
     mock_get_api_key.return_value = "valid-key"
 
     from mtblspy.commands.submissions import client
+
     monkeypatch.setattr(client, "DEFAULT_LOCAL_SUBMISSION_DATA_PATH", tmp_path)
 
     study_id = "MTBLS999"
     study_data_dir = tmp_path / study_id
     study_data_dir.mkdir()
-    (study_data_dir / "i_Investigation.txt").write_text("investigation", encoding="utf-8")
+    (study_data_dir / "i_Investigation.txt").write_text(
+        "investigation", encoding="utf-8"
+    )
 
     response = MagicMock()
     response.status_code = 201
@@ -1312,7 +1521,10 @@ def test_upload_metadata_uploads_selected_files_and_reports_skipped_files(
         selected_files="i_Investigation.txt,a_MTBLS123_assay.txt",
     )
 
-    assert [path.name for path in result.uploaded_files] == ["i_Investigation.txt", "a_MTBLS123_assay.txt"]
+    assert [path.name for path in result.uploaded_files] == [
+        "i_Investigation.txt",
+        "a_MTBLS123_assay.txt",
+    ]
     assert [path.name for path in result.skipped_files] == ["s_MTBLS123.txt"]
     assert [call.kwargs["files"]["file"][0] for call in mock_post.call_args_list] == [
         "i_Investigation.txt",
@@ -1412,7 +1624,9 @@ def test_download_metadata_files_discovers_all_metadata_files(
         download_responses.append(response)
     mock_get.side_effect = [study_response, *download_responses]
 
-    result = SubmissionClient().download_metadata_files("MTBLS123", target_path=tmp_path)
+    result = SubmissionClient().download_metadata_files(
+        "MTBLS123", target_path=tmp_path
+    )
 
     assert [path.name for path in result.downloaded_files] == [
         "i_Investigation.txt",
@@ -1449,7 +1663,9 @@ def test_download_metadata_file_continues_after_bad_candidate_url(
     mock_get.side_effect = [bad_response, good_response]
     output_path = tmp_path / "i_Investigation.txt"
 
-    result = SubmissionClient().download_metadata_file("MTBLS123", "i_Investigation.txt", output_path)
+    result = SubmissionClient().download_metadata_file(
+        "MTBLS123", "i_Investigation.txt", output_path
+    )
 
     assert result == output_path
     assert output_path.read_bytes() == b"metadata"
@@ -1577,12 +1793,14 @@ def test_delete_metadata_files_reports_api_errors(
     mock_post.return_value = response
 
     with pytest.raises(SubmissionAPIError) as exc_info:
-        SubmissionClient().delete_metadata_files("MTBLS123", selected_files="i_Investigation.txt")
+        SubmissionClient().delete_metadata_files(
+            "MTBLS123", selected_files="i_Investigation.txt"
+        )
 
     assert str(exc_info.value) == "Metadata delete failed for MTBLS123."
+    expected = "https://wwwdev.ebi.ac.uk/metabolights/ws/studies/MTBLS123/files?location=study&force=false"
     assert exc_info.value.errors == [
-        "HTTP 400 BAD REQUEST - Unable to delete selected files. for url: "
-        "https://wwwdev.ebi.ac.uk/metabolights/ws/studies/MTBLS123/files?location=study&force=false"
+        f"HTTP 400 BAD REQUEST - Unable to delete selected files. for url: {expected}"
     ]
 
 
@@ -1619,7 +1837,9 @@ class FakeFTP:
         elif path.startswith("/"):
             self.current_directory = path.rstrip("/") or "/"
         else:
-            self.current_directory = f"{self.current_directory.rstrip('/')}/{path}".rstrip("/")
+            self.current_directory = (
+                f"{self.current_directory.rstrip('/')}/{path}".rstrip("/")
+            )
 
     def pwd(self):
         return self.current_directory
@@ -1651,12 +1871,18 @@ class FakeFTP:
         from_path = self.absolute_path(fromname)
         to_path = self.absolute_path(toname)
         self.renamed_paths.append((from_path, to_path))
-        self.uploaded_paths = [to_path if path == from_path else path for path in self.uploaded_paths]
+        self.uploaded_paths = [
+            to_path if path == from_path else path for path in self.uploaded_paths
+        ]
 
     def delete(self, path):
         absolute_path = self.absolute_path(path)
         self.deleted_paths.append(absolute_path)
-        self.uploaded_paths = [uploaded_path for uploaded_path in self.uploaded_paths if uploaded_path != absolute_path]
+        self.uploaded_paths = [
+            uploaded_path
+            for uploaded_path in self.uploaded_paths
+            if uploaded_path != absolute_path
+        ]
 
     def absolute_path(self, path):
         if path.startswith("/"):
@@ -1705,7 +1931,9 @@ def test_upload_data_files_skips_remote_existing_files_and_deduplicates_selected
     assert result.uploaded_files == ["folder1/folder2/file1.raw"]
     assert result.skipped_files == ["folder1/file2.raw"]
     assert result.missing_on_local == []
-    assert FakeFTP.instances[0].uploaded_paths == ["/incoming/MTBLS123/folder1/folder2/file1.raw"]
+    assert FakeFTP.instances[0].uploaded_paths == [
+        "/incoming/MTBLS123/folder1/folder2/file1.raw"
+    ]
     assert FakeFTP.instances[0].renamed_paths == [
         (
             "/incoming/MTBLS123/folder1/folder2/.ftp_file1.raw",
@@ -1762,7 +1990,9 @@ def test_download_data_files_downloads_selected_ftp_folder(
         ftp_factory=DownloadFTP,
     )
 
-    assert [path.relative_to(tmp_path).as_posix() for path in result.downloaded_files] == [
+    assert [
+        path.relative_to(tmp_path).as_posix() for path in result.downloaded_files
+    ] == [
         "raw/file1.raw",
         "raw/file2.raw",
     ]
@@ -1804,7 +2034,9 @@ def test_download_data_files_excludes_metadata_files_by_default(
         ftp_factory=DownloadFTP,
     )
 
-    assert [path.relative_to(tmp_path).as_posix() for path in result.downloaded_files] == [
+    assert [
+        path.relative_to(tmp_path).as_posix() for path in result.downloaded_files
+    ] == [
         "raw/file1.raw",
         "raw/file2.raw",
     ]
@@ -1831,7 +2063,9 @@ def test_download_data_files_rejects_selection_with_all(mock_get_base_url):
     mock_get_base_url.return_value = "https://wwwdev.ebi.ac.uk/metabolights/ws"
 
     with pytest.raises(SubmissionAPIError) as exc_info:
-        SubmissionClient().download_data_files("MTBLS123", selected_files="raw", download_all=True)
+        SubmissionClient().download_data_files(
+            "MTBLS123", selected_files="raw", download_all=True
+        )
 
     assert "Use either --files or --all" in str(exc_info.value)
 
@@ -1867,7 +2101,9 @@ def test_download_data_files_emits_progress_events(
         progress_callback=progress_events.append,
     )
 
-    assert [path.relative_to(tmp_path).as_posix() for path in result.downloaded_files] == [
+    assert [
+        path.relative_to(tmp_path).as_posix() for path in result.downloaded_files
+    ] == [
         "raw/file1.raw",
         "raw/file2.raw",
     ]
@@ -2040,7 +2276,11 @@ class NlstOnlyTemporaryFilesFTP(TemporaryFilesFTP):
         if path == "/":
             self.current_directory = "/"
             return
-        absolute_path = path if path.startswith("/") else f"{self.current_directory.rstrip('/')}/{path}"
+        absolute_path = (
+            path
+            if path.startswith("/")
+            else f"{self.current_directory.rstrip('/')}/{path}"
+        )
         absolute_path = absolute_path.rstrip("/") or "/"
         if absolute_path not in self.directories:
             raise error_perm("550 Failed to change directory.")

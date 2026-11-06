@@ -1,8 +1,7 @@
 import os
 
-from mtblspy.credentials import CredentialStore
+from mtblspy.credentials import DEFAULT_BASE_URL, CredentialStore
 
-DEFAULT_BASE_URL = "https://wwwdev.ebi.ac.uk/metabolights/ws"
 _CREDENTIAL_STORE = CredentialStore()
 
 
@@ -24,7 +23,10 @@ def save_api_key(api_key, credential_base_url=None):
 
 
 def get_api_key(credential_base_url=None):
-    return os.getenv("MTBLS_API_KEY") or get_credential_store(credential_base_url).get_api_token()
+    return (
+        os.getenv("MTBLS_API_KEY")
+        or get_credential_store(credential_base_url).get_api_token()
+    )
 
 
 def save_user_name(user_name, credential_base_url=None):
@@ -51,7 +53,9 @@ def get_saved_base_url():
 
 
 def save_jwt_token(rest_api_base_url, jwt_token, credential_base_url=None):
-    get_credential_store(credential_base_url).set_jwt_token(rest_api_base_url, jwt_token)
+    get_credential_store(credential_base_url).set_jwt_token(
+        rest_api_base_url, jwt_token
+    )
 
 
 def get_jwt_token(rest_api_base_url, credential_base_url=None):
@@ -59,15 +63,40 @@ def get_jwt_token(rest_api_base_url, credential_base_url=None):
 
 
 def save_refresh_token(rest_api_base_url, refresh_token, credential_base_url=None):
-    get_credential_store(credential_base_url).set_refresh_token(rest_api_base_url, refresh_token)
+    get_credential_store(credential_base_url).set_refresh_token(
+        rest_api_base_url, refresh_token
+    )
 
 
 def get_refresh_token(rest_api_base_url, credential_base_url=None):
-    return get_credential_store(credential_base_url).get_refresh_token(rest_api_base_url)
+    return get_credential_store(credential_base_url).get_refresh_token(
+        rest_api_base_url
+    )
 
 
-def clear_session(rest_api_base_url=None, submission_api_base_url=None, credential_base_url=None):
-    get_credential_store(credential_base_url).clear_session(rest_api_base_url, submission_api_base_url)
+def get_oauth_session(base_url, credential_base_url=None):
+    return get_credential_store(credential_base_url).get_oauth_session(base_url)
+
+
+def save_oauth_session(base_url, session, credential_base_url=None):
+    get_credential_store(credential_base_url).set_oauth_session(base_url, session)
+
+
+def save_login_session(
+    base_url, session, *, api_key=None, user_name=None, credential_base_url=None
+):
+    get_credential_store(credential_base_url).replace_session(
+        session, api_token=api_key, user_name=user_name
+    )
+    save_base_url(base_url)
+
+
+def clear_session(
+    rest_api_base_url=None, submission_api_base_url=None, credential_base_url=None
+):
+    get_credential_store(credential_base_url).clear_session(
+        rest_api_base_url, submission_api_base_url
+    )
 
 
 def get_base_url():

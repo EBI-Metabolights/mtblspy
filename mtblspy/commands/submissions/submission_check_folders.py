@@ -8,18 +8,17 @@ import click
 from mtblspy.commands.output import save_json_output
 from mtblspy.commands.submissions.client import (
     DEFAULT_LOCAL_SUBMISSION_CACHE_PATH,
-    DEFAULT_LOCAL_SUBMISSION_DATA_PATH,
     is_metadata_filename,
+    metadata_filename_study_id_error,
     normalize_study_id,
 )
 from mtblspy.commands.submissions.exceptions import SubmissionAPIError
 from mtblspy.commands.submissions.local_validation import (
-    RAW_FILE_COLUMNS,
-    DERIVED_FILE_COLUMNS,
     ASSIGNMENT_FILE_COLUMNS,
+    DERIVED_FILE_COLUMNS,
+    RAW_FILE_COLUMNS,
     get_column_values,
     load_local_validation_input,
-    resolve_metadata_path,
     table_rows,
 )
 
@@ -27,19 +26,21 @@ ALLOWED_NAME_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
 RAW_FOLDER_SUFFIXES = (".d", ".raw")
 
 
-@click.command(name="check-folders", short_help="Check local metadata and data folders before submission.")
-@click.argument("study_id")
+@click.command(
+    name="check-folders",
+    short_help="Check local metadata and data folders before submission.",
+)
 @click.option(
-    "--default-submission-data-path",
-    default=str(DEFAULT_LOCAL_SUBMISSION_DATA_PATH),
-    show_default=True,
-    help="Parent folder for default metadata lookup.",
+    "--study-id",
+    help="Optionally validate metadata filenames against this study accession.",
 )
 @click.option(
     "-p",
     "--metadata-files-path",
     "--metadata-path",
-    help="Local ISA-Tab metadata directory. Defaults to <default-submission-data-path>/<study-id>.",
+    default=".",
+    show_default=True,
+    help="Local ISA-Tab metadata directory.",
 )
 @click.option(
     "--data-files-path",
@@ -52,28 +53,31 @@ RAW_FOLDER_SUFFIXES = (".d", ".raw")
     type=click.Path(dir_okay=False),
     help="Save the folder check report as JSON. Defaults to the local MetaboLights cache folder.",
 )
-def check_folders(study_id, default_submission_data_path, metadata_files_path, data_files_path, output):
+def check_folders(study_id, metadata_files_path, data_files_path, output):
     """Check local study folders against MetaboLights submission prerequisites."""
     result = check_submission_folders(
-        study_id,
+        study_id=study_id,
         metadata_files_path=metadata_files_path,
         data_files_path=data_files_path,
-        default_submission_data_path=default_submission_data_path,
     )
-    output_path = save_check_folders_output(result, output, result["study_id"])
+    output_path = save_check_folders_output(result, output)
     click.echo(json.dumps(result, indent=2))
     click.echo(f"Folder check report JSON saved to {output_path}")
     if result["status"] == "failed":
         raise click.exceptions.Exit(1)
 
 
-def check_submission_folders(study_id, metadata_files_path=None, data_files_path=None, default_submission_data_path=None):
-    study_id = normalize_study_id(study_id)
-    metadata_path = resolve_metadata_path(study_id, metadata_files_path, default_submission_data_path)
+def check_submission_folders(
+    study_id=None,
+    metadata_files_path=None,
+    data_files_path=None,
+):
+    study_id = normalize_study_id(study_id) if study_id else None
+    metadata_path = Path(metadata_files_path or ".").expanduser().resolve()
     data_path = resolve_data_files_path(data_files_path, metadata_path)
     result = {
-        "study_id": study_id,
         "status": "success",
+        "study_id": study_id,
         "metadata_files_path": str(metadata_path),
         "data_files_path": str(data_path),
         "summary": {
@@ -89,15 +93,22 @@ def check_submission_folders(study_id, metadata_files_path=None, data_files_path
     }
 
     validation_input = None
-    check_metadata_folder(metadata_path, result)
+    check_metadata_folder(metadata_path, result, study_id=study_id)
     check_data_folder(data_path, result)
     if metadata_path.exists() and metadata_path.is_dir():
         try:
-            validation_input = load_local_validation_input(study_id, metadata_path, data_path)
+            validation_input = load_local_validation_input(
+                "LOCAL", metadata_path, data_path
+            )
         except SubmissionAPIError as exc:
             add_error(result, "metadata_parse_failed", metadata_path, str(exc))
         except Exception as exc:
-            add_error(result, "metadata_parse_failed", metadata_path, f"Unable to parse ISA-Tab metadata: {exc}")
+            add_error(
+                result,
+                "metadata_parse_failed",
+                metadata_path,
+                f"Unable to parse ISA-Tab metadata: {exc}",
+            )
 
     if validation_input:
         update_summary(result, validation_input)
@@ -116,47 +127,107 @@ def resolve_data_files_path(data_files_path, metadata_path):
     return (metadata_path / "FILES").resolve()
 
 
-def save_check_folders_output(payload, output, study_id):
+def save_check_folders_output(payload, output):
     return save_json_output(
         payload,
         output,
-        DEFAULT_LOCAL_SUBMISSION_CACHE_PATH / study_id,
-        f"{study_id}_folder_check_report.json",
+        DEFAULT_LOCAL_SUBMISSION_CACHE_PATH,
+        "folder_check_report.json",
     )
 
 
-def check_metadata_folder(metadata_path, result):
+def check_metadata_folder(metadata_path, result, study_id=None):
     if not metadata_path.exists() or not metadata_path.is_dir():
-        add_error(result, "metadata_path_missing", metadata_path, f"Metadata path does not exist or is not a directory: {metadata_path}")
+        add_error(
+            result,
+            "metadata_path_missing",
+            metadata_path,
+            f"Metadata path does not exist or is not a directory: {metadata_path}",
+        )
         return
 
-    metadata_files = [path for path in metadata_path.iterdir() if path.is_file() and is_metadata_filename(path.name)]
+    metadata_files = [
+        path
+        for path in metadata_path.iterdir()
+        if path.is_file() and is_metadata_filename(path.name)
+    ]
     result["summary"]["metadata_files"] = len(metadata_files)
+    if study_id:
+        for path in metadata_files:
+            message = metadata_filename_study_id_error(path.name, study_id)
+            if message:
+                add_error(
+                    result,
+                    "metadata_filename_study_id_mismatch",
+                    path,
+                    message,
+                )
     all_files = [path for path in metadata_path.iterdir() if path.is_file()]
     for path in all_files:
         check_allowed_name(path.name, path, result)
-        if path.suffix.lower() in {".txt", ".tsv"} and not is_metadata_filename(path.name):
-            add_error(result, "metadata_filename_invalid", path, "Metadata files must use i_*.txt, s_*.txt, a_*.txt, or m_*.tsv names.")
+        if path.suffix.lower() in {".txt", ".tsv"} and not is_metadata_filename(
+            path.name
+        ):
+            add_error(
+                result,
+                "metadata_filename_invalid",
+                path,
+                "Metadata files must use i_*.txt, s_*.txt, a_*.txt, or m_*.tsv names.",
+            )
 
-    investigation_files = sorted(path for path in metadata_files if path.name.startswith("i_"))
+    investigation_files = sorted(
+        path for path in metadata_files if path.name.startswith("i_")
+    )
     sample_files = sorted(path for path in metadata_files if path.name.startswith("s_"))
     assay_files = sorted(path for path in metadata_files if path.name.startswith("a_"))
-    assignment_files = sorted(path for path in metadata_files if path.name.startswith("m_"))
+    assignment_files = sorted(
+        path for path in metadata_files if path.name.startswith("m_")
+    )
     if not investigation_files:
-        add_error(result, "investigation_file_missing", metadata_path, "No investigation file matching i_*.txt found.")
+        add_error(
+            result,
+            "investigation_file_missing",
+            metadata_path,
+            "No investigation file matching i_*.txt found.",
+        )
     if len(investigation_files) > 1:
-        add_warning(result, "multiple_investigation_files", metadata_path, "Multiple i_*.txt files found; the first sorted file will be used by validation.")
+        add_warning(
+            result,
+            "multiple_investigation_files",
+            metadata_path,
+            "Multiple i_*.txt files found; the first sorted file will be used by validation.",
+        )
     if not sample_files:
-        add_error(result, "sample_file_missing", metadata_path, "No sample file matching s_*.txt found.")
+        add_error(
+            result,
+            "sample_file_missing",
+            metadata_path,
+            "No sample file matching s_*.txt found.",
+        )
     if not assay_files:
-        add_error(result, "assay_file_missing", metadata_path, "No assay file matching a_*.txt found.")
+        add_error(
+            result,
+            "assay_file_missing",
+            metadata_path,
+            "No assay file matching a_*.txt found.",
+        )
     if not assignment_files:
-        add_warning(result, "assignment_file_missing", metadata_path, "No metabolite assignment file matching m_*.tsv found.")
+        add_warning(
+            result,
+            "assignment_file_missing",
+            metadata_path,
+            "No metabolite assignment file matching m_*.tsv found.",
+        )
 
 
 def check_data_folder(data_path, result):
     if not data_path.exists() or not data_path.is_dir():
-        add_error(result, "data_path_missing", data_path, f"Data files path does not exist or is not a directory: {data_path}")
+        add_error(
+            result,
+            "data_path_missing",
+            data_path,
+            f"Data files path does not exist or is not a directory: {data_path}",
+        )
         return
 
     file_count = 0
@@ -195,9 +266,15 @@ def check_allowed_name(name, path, result):
 
 
 def update_summary(result, validation_input):
-    result["summary"]["referenced_raw_files"] = len(validation_input.get("referencedRawFiles", []))
-    result["summary"]["referenced_derived_files"] = len(validation_input.get("referencedDerivedFiles", []))
-    result["summary"]["referenced_assignment_files"] = len(validation_input.get("referencedAssignmentFiles", []))
+    result["summary"]["referenced_raw_files"] = len(
+        validation_input.get("referencedRawFiles", [])
+    )
+    result["summary"]["referenced_derived_files"] = len(
+        validation_input.get("referencedDerivedFiles", [])
+    )
+    result["summary"]["referenced_assignment_files"] = len(
+        validation_input.get("referencedAssignmentFiles", [])
+    )
 
 
 def check_assay_file_references(validation_input, metadata_path, data_path, result):
@@ -213,19 +290,44 @@ def check_assay_file_references(validation_input, metadata_path, data_path, resu
         referenced_data_files.update(derived_files)
         for file_name in raw_files + derived_files:
             if not file_name.startswith("FILES/"):
-                add_error(result, "data_reference_without_files_prefix", assay_file_name, f"Data file reference must start with FILES/: {file_name}")
+                add_error(
+                    result,
+                    "data_reference_without_files_prefix",
+                    assay_file_name,
+                    f"Data file reference must start with FILES/: {file_name}",
+                )
                 continue
             relative_name = file_name.removeprefix("FILES/")
             if not (data_path / relative_name).exists():
-                add_error(result, "referenced_data_file_missing", assay_file_name, f"Referenced data file or folder was not found: {file_name}")
+                add_error(
+                    result,
+                    "referenced_data_file_missing",
+                    assay_file_name,
+                    f"Referenced data file or folder was not found: {file_name}",
+                )
         for file_name in assignment_files:
             if not (metadata_path / file_name).is_file():
-                add_error(result, "referenced_assignment_file_missing", assay_file_name, f"Referenced metabolite assignment file was not found: {file_name}")
+                add_error(
+                    result,
+                    "referenced_assignment_file_missing",
+                    assay_file_name,
+                    f"Referenced metabolite assignment file was not found: {file_name}",
+                )
 
     if not referenced_data_files:
-        add_warning(result, "data_files_not_referenced", metadata_path, "No raw or derived data files are referenced from assay files.")
+        add_warning(
+            result,
+            "data_files_not_referenced",
+            metadata_path,
+            "No raw or derived data files are referenced from assay files.",
+        )
     if not referenced_assignment_files:
-        add_warning(result, "assignment_files_not_referenced", metadata_path, "No metabolite assignment files are referenced from assay files.")
+        add_warning(
+            result,
+            "assignment_files_not_referenced",
+            metadata_path,
+            "No metabolite assignment files are referenced from assay files.",
+        )
 
 
 def check_zip_raw_folder_contents(data_path, result):
@@ -237,10 +339,13 @@ def check_zip_raw_folder_contents(data_path, result):
                 raw_roots = {
                     name.split("/", 1)[0]
                     for name in archive.namelist()
-                    if "/" in name and name.split("/", 1)[0].lower().endswith(RAW_FOLDER_SUFFIXES)
+                    if "/" in name
+                    and name.split("/", 1)[0].lower().endswith(RAW_FOLDER_SUFFIXES)
                 }
         except zipfile.BadZipFile:
-            add_error(result, "zip_file_invalid", zip_path, "Zip file could not be read.")
+            add_error(
+                result, "zip_file_invalid", zip_path, "Zip file could not be read."
+            )
             continue
         if len(raw_roots) > 1:
             add_error(
