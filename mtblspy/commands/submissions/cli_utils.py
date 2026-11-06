@@ -43,8 +43,7 @@ def get_submission_client(ctx, base_url=None, jwt_token=None, factory=None):
 def jwt_token_option(function):
     return click.option(
         "--jwt-token",
-        envvar="MTBLS_JWT_TOKEN",
-        help="Existing submission API JWT token to use and store for this command.",
+        help="Import an existing JWT for this command. Environment JWT sessions are handled automatically.",
     )(function)
 
 

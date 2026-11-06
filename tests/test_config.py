@@ -23,6 +23,13 @@ class FakeCredentialStore:
         self.jwt_tokens = {}
         self.refresh_tokens = {}
         self.cleared_session = None
+        self.oauth_sessions = {}
+
+    def get_oauth_session(self, base_url):
+        return self.oauth_sessions.get(base_url)
+
+    def set_oauth_session(self, base_url, session):
+        self.oauth_sessions[base_url] = session
 
     def get_api_token(self):
         return self.api_token

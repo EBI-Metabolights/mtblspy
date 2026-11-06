@@ -27,6 +27,7 @@ from mtblspy.commands.submissions.exceptions import (
     SubmissionAPIError,
 )
 from mtblspy.commands.submissions.models import StudyInputFormat
+from mtblspy.config import get_credential_base_url, get_credential_store
 
 
 def make_jwt(payload):
@@ -40,17 +41,11 @@ def make_jwt(payload):
     return f"{encode({'alg': 'none'})}.{encode(payload)}."
 
 
-@patch("mtblspy.commands.submissions.client.save_refresh_token")
-@patch("mtblspy.commands.submissions.client.save_jwt_token")
-@patch("mtblspy.commands.submissions.client.save_config")
 @patch("mtblspy.commands.submissions.client.requests.post")
 @patch("mtblspy.commands.submissions.client.get_base_url")
 def test_login_fetches_api_token_jwt_and_refresh_token(
     mock_get_base_url,
     mock_post,
-    mock_save_config,
-    mock_save_jwt_token,
-    mock_save_refresh_token,
 ):
     mock_get_base_url.return_value = "https://wwwdev.ebi.ac.uk/metabolights/ws"
     login_response = MagicMock()
@@ -90,27 +85,20 @@ def test_login_fetches_api_token_jwt_and_refresh_token(
         "password": "password",
         "client_id": "swagger-ui-test",
     }
-    mock_save_config.assert_called_once_with(
-        api_key="valid-key",
-        base_url="https://wwwdev.ebi.ac.uk/metabolights/ws",
-        user_name="user@example.org",
-        credential_base_url=None,
+    store = get_credential_store(
+        get_credential_base_url("https://wwwdev.ebi.ac.uk/metabolights/ws")
     )
-    mock_save_jwt_token.assert_called_once_with(
-        "https://wwwdev.ebi.ac.uk/metabolights/ws3",
-        "jwt-token",
-        credential_base_url=None,
+    assert store.get_user_name() == "user@example.org"
+    assert (
+        store.get_jwt_token("https://wwwdev.ebi.ac.uk/metabolights/ws") == "jwt-token"
     )
-    mock_save_refresh_token.assert_called_once_with(
-        "https://wwwdev.ebi.ac.uk/metabolights/ws3",
-        "refresh-token",
-        credential_base_url=None,
+    assert (
+        store.get_refresh_token("https://wwwdev.ebi.ac.uk/metabolights/ws")
+        == "refresh-token"
     )
+    assert store.get_api_token() == "valid-key"
 
 
-@patch("mtblspy.commands.submissions.client.save_refresh_token")
-@patch("mtblspy.commands.submissions.client.save_jwt_token")
-@patch("mtblspy.commands.submissions.client.save_config")
 @patch("mtblspy.commands.submissions.client.requests.get")
 @patch("mtblspy.commands.submissions.client.requests.post")
 @patch("mtblspy.commands.submissions.client.get_base_url")
@@ -118,9 +106,6 @@ def test_login_fetches_api_token_from_accounts_when_login_token_empty(
     mock_get_base_url,
     mock_post,
     mock_get,
-    mock_save_config,
-    mock_save_jwt_token,
-    mock_save_refresh_token,
 ):
     mock_get_base_url.return_value = "https://www.ebi.ac.uk/metabolights/ws"
     login_response = MagicMock()
@@ -158,56 +143,40 @@ def test_login_fetches_api_token_from_accounts_when_login_token_empty(
         "accept": "application/json",
         "Authorization": "Bearer jwt-token",
     }
-    mock_save_config.assert_called_once_with(
-        api_key="valid-key",
-        base_url="https://www.ebi.ac.uk/metabolights/ws",
-        user_name="user@example.org",
-        credential_base_url="https://www.ebi.ac.uk/metabolights/ws",
+    store = get_credential_store(
+        get_credential_base_url("https://www.ebi.ac.uk/metabolights/ws")
     )
-    mock_save_jwt_token.assert_called_once_with(
-        "https://www.ebi.ac.uk/metabolights/ws3",
-        "jwt-token",
-        credential_base_url="https://www.ebi.ac.uk/metabolights/ws",
+    assert store.get_user_name() == "user@example.org"
+    assert store.get_jwt_token("https://www.ebi.ac.uk/metabolights/ws") == "jwt-token"
+    assert (
+        store.get_refresh_token("https://www.ebi.ac.uk/metabolights/ws")
+        == "refresh-token"
     )
-    mock_save_refresh_token.assert_called_once_with(
-        "https://www.ebi.ac.uk/metabolights/ws3",
-        "refresh-token",
-        credential_base_url="https://www.ebi.ac.uk/metabolights/ws",
-    )
+    assert store.get_api_token() == "valid-key"
 
 
-@patch("mtblspy.commands.submissions.client.save_jwt_token")
-@patch("mtblspy.commands.submissions.client.save_config")
 @patch("mtblspy.commands.submissions.client.get_base_url")
 def test_login_with_jwt_stores_token_and_claim_user(
     mock_get_base_url,
-    mock_save_config,
-    mock_save_jwt_token,
 ):
     mock_get_base_url.return_value = "https://wwwdev.ebi.ac.uk/metabolights/ws"
     jwt_token = make_jwt({"email": "user@example.org", "exp": time.time() + 3600})
 
     SubmissionClient().login_with_jwt(f"Bearer {jwt_token}")
 
-    mock_save_config.assert_called_once_with(
-        base_url="https://wwwdev.ebi.ac.uk/metabolights/ws",
-        user_name="user@example.org",
-        credential_base_url=None,
+    store = get_credential_store(
+        get_credential_base_url("https://wwwdev.ebi.ac.uk/metabolights/ws")
     )
-    mock_save_jwt_token.assert_called_once_with(
-        "https://wwwdev.ebi.ac.uk/metabolights/ws3",
-        jwt_token,
-        credential_base_url=None,
-    )
+    assert store.get_user_name() == "user@example.org"
+    assert store.get_jwt_token("https://wwwdev.ebi.ac.uk/metabolights/ws") == jwt_token
+    assert store.get_refresh_token("https://wwwdev.ebi.ac.uk/metabolights/ws") is None
+    assert store.get_api_token() is None
 
 
-@patch("mtblspy.commands.submissions.client.save_jwt_token")
-@patch("mtblspy.commands.submissions.client.save_config")
 @patch("mtblspy.commands.submissions.client.get_base_url")
 def test_login_with_jwt_rejects_expired_token(
     mock_get_base_url,
-    mock_save_config,
-    mock_save_jwt_token,
+    isolated_credentials,
 ):
     mock_get_base_url.return_value = "https://www.ebi.ac.uk/metabolights/ws"
     jwt_token = make_jwt({"email": "user@example.org", "exp": time.time() - 3600})
@@ -215,8 +184,7 @@ def test_login_with_jwt_rejects_expired_token(
     with pytest.raises(AuthenticationError, match="JWT token is expired"):
         SubmissionClient().login_with_jwt(jwt_token)
 
-    mock_save_config.assert_not_called()
-    mock_save_jwt_token.assert_not_called()
+    assert not isolated_credentials
 
 
 @patch("mtblspy.commands.submissions.client.requests.post")
@@ -1208,9 +1176,7 @@ def test_validation_result_adds_counts_and_removes_summary():
                         {
                             "type": "ERROR",
                             "title": "Invalid assay group",
-                            "details": [
-                                {"type": "ERROR", "title": "Invalid assay"}
-                            ],
+                            "details": [{"type": "ERROR", "title": "Invalid assay"}],
                         },
                         {
                             "type": "WARNING",
@@ -1223,7 +1189,7 @@ def test_validation_result_adds_counts_and_removes_summary():
                             ],
                         },
                     ],
-                }
+                },
             }
         }
     }

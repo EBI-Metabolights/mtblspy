@@ -1,6 +1,7 @@
 import base64
 import json
 import logging
+import os
 import posixpath
 import time
 from dataclasses import dataclass, field
@@ -29,9 +30,16 @@ from mtblspy.config import (
     get_jwt_token,
     get_refresh_token,
     get_user_name,
-    save_config,
     save_jwt_token,
+    save_login_session,
     save_refresh_token,
+)
+from mtblspy.oauth import (
+    OAuthSession,
+    default_issuer,
+    make_session,
+    refresh_session,
+    track_session_source,
 )
 
 VALIDATION_MAX_POLLS = 120
@@ -121,15 +129,53 @@ class SubmissionClient:
         self.credential_base_url = get_credential_base_url(self.rest_api_base_url)
         self.api_token = api_token
 
+    def _request(self, method, url, **kwargs):
+        """Retry a rejected bearer token once, including multipart uploads."""
+        request = getattr(requests, method.lower())
+        positions = []
+        for value in (kwargs.get("files") or {}).values():
+            handle = value[1] if isinstance(value, tuple) else value
+            if hasattr(handle, "tell") and hasattr(handle, "seek"):
+                positions.append((handle, handle.tell()))
+        response = request(url, **kwargs)
+        headers = kwargs.get("headers", {})
+        if response.status_code == 401 and headers.get("Authorization", "").startswith(
+            "Bearer "
+        ):
+            for handle, position in positions:
+                handle.seek(position)
+            current = self.get_submission_headers()
+            if current.get("Authorization") == headers.get("Authorization"):
+                current = self.get_submission_headers(force_refresh=True)
+            headers.update(current)
+            kwargs["headers"] = headers
+            response = request(url, **kwargs)
+            if response.status_code == 401:
+                raise AuthenticationError(
+                    "Authentication was rejected after refresh. Run 'mtbls auth login' again."
+                )
+        return response
+
     def get_auth_headers(self):
-        api_token = self.api_token or get_api_key(
-            credential_base_url=self.credential_base_url
-        )
-        if api_token:
-            return {"user-token": api_token.strip()}
+        if self.api_token:
+            return {"user-token": self.api_token.strip()}
+        if not (os.getenv("MTBLS_TOKEN_FILE") or os.getenv("MTBLS_JWT_TOKEN")):
+            api_token = get_api_key(credential_base_url=self.credential_base_url)
+            if api_token:
+                return {"user-token": api_token.strip()}
+        token = OAuthSession(
+            self.submission_api_base_url, self.credential_base_url
+        ).get_access_token()
+        if token:
+            return {"accept": "application/json", "Authorization": f"Bearer {token}"}
         return self.get_submission_headers()
 
     def get_submission_headers(self, force_refresh=False):
+        token = OAuthSession(
+            self.submission_api_base_url, self.credential_base_url
+        ).get_access_token(force_refresh)
+        if token:
+            return {"accept": "application/json", "Authorization": f"Bearer {token}"}
         jwt_token = (
             None
             if force_refresh
@@ -244,6 +290,19 @@ class SubmissionClient:
 
     def refresh_jwt_token(self, refresh_token):
         """Attempt to get a new JWT using a refresh token. Returns the new JWT or None on failure."""
+        previous = get_jwt_token(
+            self.submission_api_base_url, credential_base_url=self.credential_base_url
+        )
+        claims = decode_jwt_payload(previous) if previous else {}
+        if claims.get("azp") and claims["azp"] != "swagger-ui-test":
+            session = make_session(
+                previous, refresh_token, base_url=self.submission_api_base_url
+            )
+            updated = refresh_session(session)
+            OAuthSession(self.submission_api_base_url, self.credential_base_url).save(
+                updated
+            )
+            return updated["access_token"]
         refresh_url = f"{self.submission_api_base_url.rstrip('/')}/auth/v1/refresh"
         try:
             response = requests.post(
@@ -394,54 +453,75 @@ class SubmissionClient:
                     f"or {self.rest_api_base_url.rstrip('/')}/auth/accounts."
                 )
 
-        # 3. Save everything
-        save_config(
+        # Save tokens and account details together in one credential record.
+        save_login_session(
+            self.rest_api_base_url,
+            make_session(
+                jwt_token, refresh_token, base_url=self.submission_api_base_url
+            ),
             api_key=api_token,
-            base_url=self.rest_api_base_url,
             user_name=user_name,
             credential_base_url=self.credential_base_url,
         )
-        save_jwt_token(
-            self.submission_api_base_url,
-            jwt_token,
-            credential_base_url=self.credential_base_url,
-        )
-        if refresh_token:
-            save_refresh_token(
-                self.submission_api_base_url,
-                refresh_token,
-                credential_base_url=self.credential_base_url,
-            )
 
     def password_login(self, user_name, password):
         """Backward-compatible alias for username/password login."""
         self.login(user_name, password)
 
-    def login_with_jwt(self, jwt_token, fetch_api_token=False):
+    def login_with_jwt(
+        self,
+        jwt_token,
+        fetch_api_token=False,
+        *,
+        refresh_token=None,
+        issuer=None,
+        client_id=None,
+    ):
         """Store an existing submission API JWT for subsequent commands."""
         jwt_token = normalize_bearer_token(jwt_token)
         if not jwt_token:
             raise AuthenticationError("JWT token cannot be empty.")
-        if is_jwt_expired(jwt_token):
+        if is_jwt_expired(jwt_token) and not refresh_token:
             raise AuthenticationError("JWT token is expired.")
+
+        session = make_session(
+            jwt_token,
+            refresh_token,
+            issuer=issuer,
+            client_id=client_id,
+            base_url=self.submission_api_base_url,
+        )
+        track_session_source(session)
+        if is_jwt_expired(jwt_token):
+            session = refresh_session(session)
+            jwt_token = session["access_token"]
 
         user_name = get_user_name_from_jwt(jwt_token)
         api_token = None
         if fetch_api_token:
             api_token = self.try_fetch_api_token_from_jwt(jwt_token)
-        config_values = {
-            "base_url": self.rest_api_base_url,
-            "user_name": user_name,
-            "credential_base_url": self.credential_base_url,
-        }
-        if api_token:
-            config_values["api_key"] = api_token
-        save_config(
-            **config_values,
+        save_login_session(
+            self.rest_api_base_url,
+            session,
+            api_key=api_token,
+            user_name=user_name,
+            credential_base_url=self.credential_base_url,
         )
-        save_jwt_token(
-            self.submission_api_base_url,
-            jwt_token,
+
+    def login_with_token_file(self, path, *, issuer=None, client_id=None):
+        """Link a shared MCP token cache; refresh tokens are never copied."""
+        session = OAuthSession(self.submission_api_base_url, self.credential_base_url)
+        # Validate the file before replacing the previous local session.
+        link = {
+            "token_file": str(Path(path).expanduser().absolute()),
+            "issuer": issuer or default_issuer(self.submission_api_base_url),
+            "client_id": client_id,
+        }
+        token = session.from_token_file(link)
+        save_login_session(
+            self.rest_api_base_url,
+            link,
+            user_name=get_user_name_from_jwt(token),
             credential_base_url=self.credential_base_url,
         )
 
@@ -481,7 +561,8 @@ class SubmissionClient:
         return response
 
     def list_studies(self):
-        response = requests.get(
+        response = self._request(
+            "GET",
             f"{self.rest_api_base_url.rstrip('/')}/studies/user",
             headers=self.get_auth_headers(),
             timeout=30,
@@ -491,7 +572,8 @@ class SubmissionClient:
 
     def create_study(self, input_file_path, input_format=StudyInputFormat.JSON):
         request = self.load_study_creation_request(input_file_path, input_format)
-        response = requests.post(
+        response = self._request(
+            "POST",
             f"{self.rest_api_base_url.rstrip('/')}/provisional-studies",
             headers=self.get_auth_headers(),
             json=request.model_dump(by_alias=True),
@@ -515,7 +597,8 @@ class SubmissionClient:
 
     def get_private_ftp_credentials(self, study_id):
         study_id = normalize_study_id(study_id)
-        response = requests.get(
+        response = self._request(
+            "GET",
             f"{self.rest_api_base_url.rstrip('/')}/studies/{study_id}/upload-info",
             headers=self.get_auth_headers(),
             timeout=30,
@@ -557,7 +640,8 @@ class SubmissionClient:
         for file_path in file_paths:
             try:
                 with file_path.open("rb") as file_handle:
-                    response = requests.post(
+                    response = self._request(
+                        "POST",
                         url,
                         headers=headers,
                         files={"file": (file_path.name, file_handle)},
@@ -655,7 +739,7 @@ class SubmissionClient:
         for url in build_metadata_download_urls(
             self.rest_api_base_url, study_id, file_name
         ):
-            response = requests.get(url, headers=headers, timeout=60)
+            response = self._request("GET", url, headers=headers, timeout=60)
             status_code = int(response.status_code)
             if 200 <= status_code < 300:
                 output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -708,7 +792,8 @@ class SubmissionClient:
         )
 
     def post_metadata_delete_files(self, study_id, payload):
-        return requests.post(
+        return self._request(
+            "POST",
             f"{self.rest_api_base_url.rstrip('/')}/studies/{study_id}/files",
             headers={
                 **self.get_auth_headers(),
@@ -989,7 +1074,7 @@ class SubmissionClient:
             "Source-Staging-Area": "private-ftp",
             "Target-Staging-Area": "readonly-study",
         }
-        response = requests.post(sync_url, headers=headers, timeout=30)
+        response = self._request("POST", sync_url, headers=headers, timeout=30)
         response.raise_for_status()
         response_data = response.json()
         raise_for_api_error(response_data)
@@ -1006,6 +1091,7 @@ class SubmissionClient:
             headers,
             max_polls,
             poll_interval,
+            request_get=self.authenticated_get,
         )
 
     def find_validation_root_causes(
@@ -1089,13 +1175,18 @@ class SubmissionClient:
                 task_headers,
                 max_polls,
                 poll_interval,
+                request_get=self.authenticated_get,
             )
 
         return response_data
 
+    def authenticated_get(self, url, **kwargs):
+        return self._request("GET", url, **kwargs)
+
     def get_study_isa_json(self, study_id):
         study_id = normalize_study_id(study_id)
-        response = requests.get(
+        response = self._request(
+            "GET",
             f"{self.rest_api_base_url.rstrip('/')}/studies/{study_id}",
             headers=self.get_auth_headers(),
             timeout=30,
@@ -2412,12 +2503,14 @@ def format_task_state(response_data):
 
 
 def ensure_validation_task_succeeded(
-    study_id, validation_url, headers, max_polls, poll_interval
+    study_id, validation_url, headers, max_polls, poll_interval, *, request_get=None
 ):
     last_response_data = None
 
     for _ in range(max_polls + 1):
-        response = requests.get(validation_url, headers=headers, timeout=30)
+        response = (request_get or requests.get)(
+            validation_url, headers=headers, timeout=30
+        )
         response_data = response.json()
         last_response_data = response_data
         if response.status_code == 404 and is_validation_task_not_found(response_data):
@@ -2454,11 +2547,11 @@ def ensure_validation_task_succeeded(
 
 
 def ensure_data_sync_task_succeeded(
-    study_id, sync_url, headers, max_polls, poll_interval
+    study_id, sync_url, headers, max_polls, poll_interval, *, request_get=None
 ):
     last_response_data = None
     for _ in range(max_polls + 1):
-        response = requests.get(sync_url, headers=headers, timeout=30)
+        response = (request_get or requests.get)(sync_url, headers=headers, timeout=30)
         response.raise_for_status()
         response_data = response.json()
         last_response_data = response_data
@@ -2514,9 +2607,7 @@ def collect_leaf_validation_messages(value, message_matcher):
     for key, item in value.items():
         if key == "summary" or not isinstance(item, (dict, list)):
             continue
-        nested_messages.extend(
-            collect_leaf_validation_messages(item, message_matcher)
-        )
+        nested_messages.extend(collect_leaf_validation_messages(item, message_matcher))
     if nested_messages:
         return nested_messages
     if message_matcher(value) and is_detailed_validation_message(value):
